@@ -40,8 +40,8 @@ in {
 
       shell = mkOption {
         type = types.str;
-        default = "zsh";
-        description = "Login shell (zsh, bash, blzsh)";
+        default = "blzsh";
+        description = "Login shell (blzsh, zsh, bash)";
       };
 
       email = mkOption {
