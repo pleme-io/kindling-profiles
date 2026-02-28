@@ -9,7 +9,6 @@
   config,
   lib,
   pkgs,
-  inputs,
   ...
 }: let
   ni = config.kindling.nodeIdentity;
@@ -21,9 +20,8 @@
   # Build --node-taint flags from ni.kubernetes.node_taints
   taintFlags = map (t: "--node-taint=${t}") ni.kubernetes.node_taints;
 in {
-  imports = [
-    inputs.self.nixosModules.blackmatter
-  ];
+  # NOTE: blackmatter NixOS modules must be loaded by the host repo.
+  # This profile only SETS blackmatter options — it does not import modules.
 
   # Enable blizzard profile — agent variant
   blackmatter.profiles.blizzard = {

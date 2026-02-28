@@ -9,15 +9,13 @@
   config,
   lib,
   pkgs,
-  inputs,
   ...
 }: let
   ni = config.kindling.nodeIdentity;
   k3sDefaults = import ../../lib/k3s-defaults.nix {inherit lib;};
 in {
-  imports = [
-    inputs.self.nixosModules.blackmatter
-  ];
+  # NOTE: blackmatter NixOS modules must be loaded by the host repo.
+  # This profile only SETS blackmatter options — it does not import modules.
 
   # Enable blizzard profile — server variant
   blackmatter.profiles.blizzard = {
