@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pleme-io/kindling-profiles/schema/node.schema.json",
+  "title": "Kindling Node Identity",
+  "description": "Schema for kindling node.yaml — machine identity configuration",
+  "type": "object",
+  "required": ["version", "profile", "hostname"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1",
+      "description": "Schema version"
+    },
+    "profile": {
+      "type": "string",
+      "enum": ["macos-developer", "k3s-server", "k3s-agent", "k3s-cloud-server"],
+      "description": "Machine profile from kindling-profiles"
+    },
+    "hostname": {
+      "type": "string",
+      "description": "Machine hostname"
+    },
+    "user": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "uid": { "type": "integer", "minimum": 0 },
+        "shell": { "type": "string", "default": "zsh" },
+        "email": { "type": "string", "format": "email" }
+      },
+      "required": ["name", "uid"]
+    },
+    "secrets": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["sops", "vault", "1password", "akeyless"],
+          "default": "sops"
+        },
+        "age_key_file": { "type": "string" }
+      }
+    },
+    "network": {
+      "type": "object",
+      "properties": {
+        "ssh": {
+          "type": "object",
+          "properties": {
+            "builder": {
+              "type": "object",
+              "properties": {
+                "hostname": { "type": "string" },
+                "fqdn": { "type": "string" },
+                "identity_file": { "type": "string" }
+              },
+              "required": ["hostname", "fqdn"]
+            },
+            "cloudflare_tunnel": {
+              "type": "object",
+              "properties": {
+                "user": { "type": "string" },
+                "domain_suffix": { "type": "string" },
+                "hosts": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              },
+              "required": ["user", "domain_suffix"]
+            }
+          }
+        }
+      }
+    },
+    "nix": {
+      "type": "object",
+      "properties": {
+        "trusted_users": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["root"]
+        },
+        "attic": {
+          "type": "object",
+          "properties": {
+            "token_file": { "type": "string" },
+            "netrc_file": { "type": "string" }
+          }
+        }
+      }
+    },
+    "kubernetes": {
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["server", "agent"] },
+        "cluster_cidr": { "type": "string", "default": "10.42.0.0/16" },
+        "service_cidr": { "type": "string", "default": "10.43.0.0/16" },
+        "clusters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "server": { "type": "string" }
+            },
+            "required": ["name", "server"]
+          }
+        }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "properties": {
+        "orgs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "base_dir": { "type": "string" },
+              "github_token_file": { "type": "string" }
+            },
+            "required": ["name", "base_dir"]
+          }
+        }
+      }
+    },
+    "git": {
+      "type": "object",
+      "properties": {
+        "user": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "email": { "type": "string" }
+          }
+        }
+      }
+    },
+    "fleet": {
+      "type": "object",
+      "properties": {
+        "peers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "hostname": { "type": "string" },
+              "ssh_user": { "type": "string", "default": "root" }
+            },
+            "required": ["name", "hostname"]
+          }
+        }
+      }
+    }
+  }
+}
