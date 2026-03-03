@@ -34,7 +34,7 @@ in {
     enable = true;
     role = "agent";
     serverAddr = ni.kubernetes.server_addr;
-    waitForDNS = true;
+    waitForDNS.enable = true;
 
     extraFlags = [
       "--node-name=${ni.hostname}"
@@ -43,7 +43,7 @@ in {
 
   # ── Hardware ────────────────────────────────────────────────
   blackmatter.profiles.blizzard.hardware = {
-    cpu.type = ni.hardware.cpu;
+    cpu.type = ni.hardware.cpu.vendor;
     kernel.modules = k3sDefaults.k3sKernelModules ++ ni.hardware.kernel.modules;
     platform = ni.hardware.platform;
   };

@@ -38,7 +38,103 @@
           "enum": ["sops", "vault", "1password", "akeyless"],
           "default": "sops"
         },
-        "age_key_file": { "type": "string" }
+        "age_key_file": { "type": "string" },
+        "ssh_authorized_keys": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "SSH public keys to deploy to authorized_keys"
+        },
+        "tls_certificates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "domain": { "type": "string" },
+              "cert_file": { "type": "string" },
+              "key_file": { "type": "string" },
+              "issuer": { "type": "string" }
+            },
+            "required": ["domain"]
+          }
+        },
+        "age_keys": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Additional age public keys"
+        }
+      }
+    },
+    "hardware": {
+      "type": "object",
+      "properties": {
+        "platform": { "type": "string", "default": "aarch64-darwin" },
+        "cpu": {
+          "type": "object",
+          "properties": {
+            "vendor": { "type": "string", "description": "CPU vendor (intel, amd, or empty)" },
+            "cores": { "type": "integer", "minimum": 1 },
+            "threads": { "type": "integer", "minimum": 1 },
+            "model": { "type": "string" }
+          }
+        },
+        "memory": {
+          "type": "object",
+          "properties": {
+            "size_gb": { "type": "number", "minimum": 0 }
+          },
+          "required": ["size_gb"]
+        },
+        "disks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "device": { "type": "string" },
+              "size": { "type": "string" },
+              "disk_type": { "type": "string", "enum": ["ssd", "nvme", "hdd"] },
+              "mount_point": { "type": "string" }
+            },
+            "required": ["device"]
+          }
+        },
+        "gpus": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "vendor": { "type": "string" },
+              "model": { "type": "string" },
+              "vram_mb": { "type": "integer" }
+            },
+            "required": ["vendor"]
+          }
+        },
+        "network_interfaces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "mac": { "type": "string" },
+              "speed_mbps": { "type": "integer" }
+            },
+            "required": ["name"]
+          }
+        },
+        "kernel": {
+          "type": "object",
+          "properties": {
+            "modules": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "params": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "filesystems": { "type": "object" }
       }
     },
     "network": {
@@ -69,6 +165,63 @@
               "required": ["user", "domain_suffix"]
             }
           }
+        },
+        "interfaces": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "address": { "type": "string" },
+              "prefix_length": { "type": "integer" },
+              "gateway": { "type": "string" },
+              "mac": { "type": "string" },
+              "mtu": { "type": "integer" }
+            }
+          }
+        },
+        "hosts": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Extra /etc/hosts entries"
+        },
+        "firewall": {
+          "type": "object",
+          "properties": {
+            "allowed_tcp_ports": {
+              "type": "array",
+              "items": { "type": "integer" }
+            },
+            "allowed_udp_ports": {
+              "type": "array",
+              "items": { "type": "integer" }
+            },
+            "rules": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "dns_servers": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "ntp_servers": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "vpn": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "public_key": { "type": "string" },
+              "endpoint": { "type": "string" },
+              "allowed_ips": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
         }
       }
     },
@@ -93,8 +246,17 @@
       "type": "object",
       "properties": {
         "role": { "type": "string", "enum": ["server", "agent"] },
+        "server_addr": { "type": "string" },
         "cluster_cidr": { "type": "string", "default": "10.42.0.0/16" },
         "service_cidr": { "type": "string", "default": "10.43.0.0/16" },
+        "node_labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "node_taints": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "clusters": {
           "type": "array",
           "items": {
@@ -104,6 +266,32 @@
               "server": { "type": "string" }
             },
             "required": ["name", "server"]
+          }
+        }
+      }
+    },
+    "fluxcd": {
+      "type": "object",
+      "properties": {
+        "enable": { "type": "boolean", "default": false },
+        "source": { "type": "string" },
+        "reconcile": { "type": "object" }
+      }
+    },
+    "services": {
+      "type": "object",
+      "properties": {
+        "custom": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "port": { "type": "integer" },
+              "health_endpoint": { "type": "string" },
+              "protocol": { "type": "string", "default": "http" }
+            },
+            "required": ["name"]
           }
         }
       }
@@ -122,7 +310,12 @@
             },
             "required": ["name", "base_dir"]
           }
-        }
+        },
+        "zoekt_repos": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "codesearch": { "type": "object" }
       }
     },
     "git": {
@@ -140,6 +333,30 @@
     "fleet": {
       "type": "object",
       "properties": {
+        "controller": { "type": "string", "description": "Fleet controller node name or URL" },
+        "environment": { "type": "string", "enum": ["prod", "staging", "dev"] },
+        "owner": { "type": "string" },
+        "team": { "type": "string" },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "maintenance_windows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "day": { "type": "string", "enum": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] },
+              "start_hour": { "type": "integer", "minimum": 0, "maximum": 23 },
+              "duration_hours": { "type": "integer", "minimum": 1 }
+            }
+          }
+        },
+        "dependencies": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Node names this node depends on"
+        },
         "peers": {
           "type": "array",
           "items": {

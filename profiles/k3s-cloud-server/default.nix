@@ -34,14 +34,14 @@ in {
     serviceCIDR = ni.kubernetes.service_cidr or k3sDefaults.defaultServiceCIDR;
     clusterDNS = k3sDefaults.defaultClusterDNS;
 
-    waitForDNS = true;
+    waitForDNS.enable = true;
 
     extraFlags = k3sDefaults.allServerFlags k3sDefaults;
   };
 
   # ── Hardware ────────────────────────────────────────────────
   blackmatter.profiles.blizzard.hardware = {
-    cpu.type = ni.hardware.cpu;
+    cpu.type = ni.hardware.cpu.vendor;
     kernel = {
       modules = k3sDefaults.k3sKernelModules ++ ni.hardware.kernel.modules;
       initrdModules = ["xhci_pci" "ahci" "nvme" "usbhid" "sd_mod"];

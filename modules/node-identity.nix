@@ -65,6 +65,265 @@ in {
         description = "Path to age key file for SOPS decryption";
         example = "~/.config/sops/age/keys.txt";
       };
+
+      ssh_authorized_keys = mkOption {
+        type = types.listOf types.str;
+        default = [];
+        description = "SSH public keys to deploy to authorized_keys";
+      };
+
+      tls_certificates = mkOption {
+        type = types.listOf (types.submodule {
+          options = {
+            domain = mkOption {type = types.str;};
+            cert_file = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+            };
+            key_file = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+            };
+            issuer = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+            };
+          };
+        });
+        default = [];
+        description = "TLS certificates managed on this node";
+      };
+
+      age_keys = mkOption {
+        type = types.listOf types.str;
+        default = [];
+        description = "Additional age public keys for encryption";
+      };
+    };
+
+    # ── Hardware ──────────────────────────────────────────────
+    hardware = {
+      platform = mkOption {
+        type = types.str;
+        default = "aarch64-darwin";
+        description = "Nix system platform string";
+        example = "x86_64-linux";
+      };
+
+      cpu = {
+        vendor = mkOption {
+          type = types.str;
+          default = "";
+          description = "CPU vendor for microcode (intel, amd, or empty)";
+        };
+
+        cores = mkOption {
+          type = types.nullOr types.int;
+          default = null;
+          description = "Number of physical CPU cores";
+        };
+
+        threads = mkOption {
+          type = types.nullOr types.int;
+          default = null;
+          description = "Number of logical CPU threads";
+        };
+
+        model = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "CPU model name";
+        };
+      };
+
+      memory = mkOption {
+        type = types.nullOr (types.submodule {
+          options = {
+            size_gb = mkOption {
+              type = types.float;
+              description = "Total memory in GB";
+            };
+          };
+        });
+        default = null;
+        description = "Memory configuration";
+      };
+
+      disks = mkOption {
+        type = types.listOf (types.submodule {
+          options = {
+            device = mkOption {type = types.str;};
+            size = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+            };
+            disk_type = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+              description = "Disk type (ssd, nvme, hdd)";
+            };
+            mount_point = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+            };
+          };
+        });
+        default = [];
+        description = "Disk devices";
+      };
+
+      gpus = mkOption {
+        type = types.listOf (types.submodule {
+          options = {
+            vendor = mkOption {type = types.str;};
+            model = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+            };
+            vram_mb = mkOption {
+              type = types.nullOr types.int;
+              default = null;
+            };
+          };
+        });
+        default = [];
+        description = "GPU devices";
+      };
+
+      network_interfaces = mkOption {
+        type = types.listOf (types.submodule {
+          options = {
+            name = mkOption {type = types.str;};
+            mac = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+            };
+            speed_mbps = mkOption {
+              type = types.nullOr types.int;
+              default = null;
+            };
+          };
+        });
+        default = [];
+        description = "Hardware network interfaces";
+      };
+
+      kernel = {
+        modules = mkOption {
+          type = types.listOf types.str;
+          default = [];
+          description = "Kernel modules to load";
+        };
+
+        params = mkOption {
+          type = types.listOf types.str;
+          default = [];
+          description = "Kernel boot parameters";
+        };
+      };
+
+      filesystems = mkOption {
+        type = types.attrs;
+        default = {};
+        description = "Filesystem mount configuration";
+      };
+    };
+
+    # ── Network ────────────────────────────────────────────────
+    network = {
+      ssh = mkOption {
+        type = types.attrs;
+        default = {};
+        description = "SSH client configuration (builder, tunnel, hosts)";
+      };
+
+      interfaces = mkOption {
+        type = types.attrsOf (types.submodule {
+          options = {
+            address = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+            };
+            prefix_length = mkOption {
+              type = types.nullOr types.int;
+              default = null;
+            };
+            gateway = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+            };
+            mac = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+            };
+            mtu = mkOption {
+              type = types.nullOr types.int;
+              default = null;
+            };
+          };
+        });
+        default = {};
+        description = "Network interface configurations";
+      };
+
+      hosts = mkOption {
+        type = types.attrsOf types.str;
+        default = {};
+        description = "Extra /etc/hosts entries (hostname -> IP)";
+      };
+
+      firewall = {
+        allowed_tcp_ports = mkOption {
+          type = types.listOf types.int;
+          default = [];
+          description = "TCP ports to allow through firewall";
+        };
+
+        allowed_udp_ports = mkOption {
+          type = types.listOf types.int;
+          default = [];
+          description = "UDP ports to allow through firewall";
+        };
+
+        rules = mkOption {
+          type = types.listOf types.str;
+          default = [];
+          description = "Additional firewall rules";
+        };
+      };
+
+      dns_servers = mkOption {
+        type = types.listOf types.str;
+        default = [];
+        description = "DNS server addresses";
+      };
+
+      ntp_servers = mkOption {
+        type = types.listOf types.str;
+        default = [];
+        description = "NTP server addresses";
+      };
+
+      vpn = mkOption {
+        type = types.listOf (types.submodule {
+          options = {
+            public_key = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+            };
+            endpoint = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+            };
+            allowed_ips = mkOption {
+              type = types.listOf types.str;
+              default = [];
+            };
+          };
+        });
+        default = [];
+        description = "VPN peer configurations (WireGuard)";
+      };
     };
 
     # ── Nix configuration ─────────────────────────────────────
@@ -86,89 +345,6 @@ in {
           type = types.nullOr types.str;
           default = null;
           description = "Path to netrc file for substituter authentication";
-        };
-      };
-    };
-
-    # ── Network ────────────────────────────────────────────────
-    network = {
-      interfaces = mkOption {
-        type = types.attrsOf (types.submodule {
-          options = {
-            address = mkOption {type = types.str;};
-            prefixLength = mkOption {
-              type = types.int;
-              default = 24;
-            };
-            gateway = mkOption {
-              type = types.nullOr types.str;
-              default = null;
-            };
-          };
-        });
-        default = {};
-        description = "Network interface configurations";
-      };
-
-      ssh = mkOption {
-        type = types.attrs;
-        default = {};
-        description = "SSH client configuration (builder, tunnel, hosts)";
-      };
-
-      hosts = mkOption {
-        type = types.attrsOf types.str;
-        default = {};
-        description = "Extra /etc/hosts entries (hostname -> IP)";
-      };
-
-      firewall = {
-        allowed_tcp_ports = mkOption {
-          type = types.listOf types.int;
-          default = [];
-          description = "TCP ports to allow through firewall";
-        };
-
-        allowed_udp_ports = mkOption {
-          type = types.listOf types.int;
-          default = [];
-          description = "UDP ports to allow through firewall";
-        };
-      };
-    };
-
-    # ── Hardware (NixOS only) ──────────────────────────────────
-    hardware = {
-      platform = mkOption {
-        type = types.str;
-        default = "aarch64-darwin";
-        description = "Nix system platform string";
-        example = "x86_64-linux";
-      };
-
-      cpu = mkOption {
-        type = types.str;
-        default = "";
-        description = "CPU vendor for microcode (intel, amd, or empty)";
-      };
-
-      filesystems = mkOption {
-        type = types.attrs;
-        default = {};
-        description = "Filesystem mount configuration";
-      };
-
-      kernel = {
-        modules = mkOption {
-          type = types.listOf types.str;
-          default = [];
-          description = "Kernel modules to load";
-        };
-
-        params = mkOption {
-          type = types.listOf types.str;
-          default = [];
-          description = "Kernel boot parameters";
         };
       };
     };
@@ -244,6 +420,31 @@ in {
       };
     };
 
+    # ── Services ───────────────────────────────────────────────
+    services = {
+      custom = mkOption {
+        type = types.listOf (types.submodule {
+          options = {
+            name = mkOption {type = types.str;};
+            port = mkOption {
+              type = types.nullOr types.int;
+              default = null;
+            };
+            health_endpoint = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+            };
+            protocol = mkOption {
+              type = types.str;
+              default = "http";
+            };
+          };
+        });
+        default = [];
+        description = "Custom services running on this node";
+      };
+    };
+
     # ── Workspace ──────────────────────────────────────────────
     workspace = {
       orgs = mkOption {
@@ -296,7 +497,61 @@ in {
       controller = mkOption {
         type = types.nullOr types.str;
         default = null;
-        description = "Fleet controller node name";
+        description = "Fleet controller node name or URL";
+      };
+
+      environment = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Environment label (prod, staging, dev)";
+      };
+
+      owner = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Owner of this node";
+      };
+
+      team = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Team responsible for this node";
+      };
+
+      tags = mkOption {
+        type = types.listOf types.str;
+        default = [];
+        description = "Tags for node categorization";
+      };
+
+      maintenance_windows = mkOption {
+        type = types.listOf (types.submodule {
+          options = {
+            day = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+              description = "Day of week (monday, tuesday, etc.)";
+            };
+            start_hour = mkOption {
+              type = types.nullOr types.int;
+              default = null;
+              description = "Start hour (0-23)";
+            };
+            duration_hours = mkOption {
+              type = types.nullOr types.int;
+              default = null;
+              description = "Duration in hours";
+            };
+          };
+        });
+        default = [];
+        description = "Scheduled maintenance windows";
+      };
+
+      dependencies = mkOption {
+        type = types.listOf types.str;
+        default = [];
+        description = "Node names this node depends on";
       };
 
       peers = mkOption {
