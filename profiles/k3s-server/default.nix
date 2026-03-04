@@ -28,7 +28,7 @@ in {
     enable = true;
     role = "server";
 
-    disableComponents = ["traefik"];
+    disable = ["traefik"];
 
     clusterCIDR = ni.kubernetes.cluster_cidr or k3sDefaults.defaultClusterCIDR;
     serviceCIDR = ni.kubernetes.service_cidr or k3sDefaults.defaultServiceCIDR;
