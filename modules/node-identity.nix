@@ -346,6 +346,24 @@ in {
           default = null;
           description = "Path to netrc file for substituter authentication";
         };
+
+        url = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "Attic cache URL";
+        };
+
+        public_keys = mkOption {
+          type = types.listOf types.str;
+          default = [];
+          description = "Attic cache public signing keys";
+        };
+
+        cache_name = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "Attic cache name";
+        };
       };
     };
 
@@ -489,6 +507,68 @@ in {
           default = "";
           description = "Git author email";
         };
+      };
+    };
+
+    # ── macOS ───────────────────────────────────────────────────
+    macos = {
+      capslock_to_escape = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Remap Caps Lock to Escape (persists via LaunchAgent)";
+      };
+
+      homebrew = {
+        casks = mkOption {
+          type = types.listOf types.str;
+          default = [];
+          description = "Homebrew casks to install";
+          example = [ "slack" "vlc" "zoom" ];
+        };
+      };
+
+      determinate_nix = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Use Determinate Nix (disables nix-darwin nix management)";
+      };
+
+      chrome = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Configure Chrome settings";
+        };
+
+        extension_ids = mkOption {
+          type = types.listOf types.str;
+          default = [];
+          description = "Chrome extension IDs to install";
+          example = [ "aeblfdkhhhdcdjpifhhbdiojplfjncoa" ];
+        };
+      };
+
+      containers = {
+        podman = mkOption {
+          type = types.bool;
+          default = false;
+          description = "Enable Podman container runtime";
+        };
+      };
+    };
+
+    # ── SSH Server ──────────────────────────────────────────────
+    ssh_server = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Enable SSH server for fleet peer access";
+      };
+
+      authorized_keys = mkOption {
+        type = types.listOf types.str;
+        default = [];
+        description = "SSH public keys authorized for login";
       };
     };
 

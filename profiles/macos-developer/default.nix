@@ -48,6 +48,9 @@ in {
           enablePush = ni.nix.attic.token_file != null;
           tokenFile = lib.mkIf (ni.nix.attic.token_file != null) ni.nix.attic.token_file;
           netrcFile = lib.mkIf (ni.nix.attic.netrc_file != null) ni.nix.attic.netrc_file;
+          url = lib.mkIf (ni.nix.attic.url != null) ni.nix.attic.url;
+          publicKeys = lib.mkIf (ni.nix.attic.public_keys != []) ni.nix.attic.public_keys;
+          cacheName = lib.mkIf (ni.nix.attic.cache_name != null) ni.nix.attic.cache_name;
         };
       };
       trustedUsers = ni.nix.trusted_users;
@@ -83,6 +86,58 @@ in {
     };
 
     vms.enable = true;
+  };
+
+  # ── Capslock → Escape LaunchAgent ──────────────────────────
+  launchd.agents.caps-lock-to-escape = lib.mkIf ni.macos.capslock_to_escape {
+    serviceConfig = {
+      Label = "io.pleme.caps-lock-to-escape";
+      ProgramArguments = [
+        "/usr/bin/hidutil"
+        "property"
+        "--set"
+        ''{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":0x700000039,"HIDKeyboardModifierMappingDst":0x700000029}]}''
+      ];
+      RunAtLoad = true;
+    };
+  };
+
+  # ── Determinate Nix ─────────────────────────────────────────
+  nix.enable = lib.mkIf ni.macos.determinate_nix false;
+  nix.gc.automatic = lib.mkIf ni.macos.determinate_nix (lib.mkForce false);
+  nix.optimise.automatic = lib.mkIf ni.macos.determinate_nix (lib.mkForce false);
+
+  # ── /etc/hosts ────────────────────────────────────────────
+  environment.etc."hosts".text = lib.mkDefault ''
+    127.0.0.1 localhost
+    255.255.255.255 broadcasthost
+    ::1 localhost
+  '';
+
+  # ── Shell — disable system-level zsh setup ──────────────
+  programs.zsh.enableGlobalCompInit = false;
+  programs.zsh.enableBashCompletion = false;
+  programs.zsh.promptInit = "";
+
+  # ── Nixpkgs ───────────────────────────────────────────────
+  nixpkgs.config.allowUnfree = true;
+
+  # ── SSH server ────────────────────────────────────────────
+  blackmatter.components.sshServer = lib.mkIf ni.ssh_server.enable {
+    enable = true;
+    users = [ ni.user.name ];
+    authorizedKeys = ni.ssh_server.authorized_keys;
+  };
+
+  # ── Homebrew ─────────────────────────────────────────────
+  homebrew = lib.mkIf (ni.macos.homebrew.casks != []) {
+    enable = true;
+    onActivation = {
+      autoUpdate = true;
+      upgrade = true;
+      cleanup = "uninstall";
+    };
+    casks = ni.macos.homebrew.casks;
   };
 
   # ── Node identity ───────────────────────────────────────────

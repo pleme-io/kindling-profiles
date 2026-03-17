@@ -64,7 +64,7 @@ in {
     stylix.overlays.enable = false;
 
     # Chrome dev launcher for curupira debugging
-    blackmatter.components.desktop.chrome-dev.enable = true;
+    blackmatter.components.desktop.chrome-dev.enable = lib.mkDefault ni.macos.chrome.enable;
 
     # Kubectl — managed by blackmatter-kubernetes HM module
     blackmatter.components.kubernetes.kubectl = lib.mkIf (ni.kubernetes.clusters != []) {
