@@ -246,5 +246,42 @@ in {
         "window-inherit-font-size" = true;
       };
     };
+
+    # ── Claude Code ─────────────────────────────────────────────
+    blackmatter.components.claude = lib.mkIf ni.tools.claude.enable {
+      enable = true;
+    };
+
+    # ── Cursor IDE ──────────────────────────────────────────────
+    blackmatter.components.cursor = lib.mkIf ni.tools.cursor.enable {
+      enable = true;
+    };
+
+    # ── MCP services ────────────────────────────────────────────
+    blackmatter.components.mcp-services = lib.mkIf ni.tools.mcp_services.enable {
+      enable = true;
+    };
+
+    # ── Window management ───────────────────────────────────────
+    blackmatter.components.aerospace = lib.mkIf ni.tools.window_manager.enable {
+      enable = true;
+    };
+
+    # ── Stylix targets ──────────────────────────────────────────
+    stylix.targets = lib.mkIf ni.tools.stylix.enable {
+      bat.enable = true;
+      fzf.enable = true;
+      lazygit.enable = true;
+    };
+
+    # ── Atlassian CLI ───────────────────────────────────────────
+    blackmatter.components.atlassian = lib.mkIf ni.atlassian.enable {
+      enable = true;
+      defaultSite = ni.atlassian.site;
+      sites.${ni.atlassian.site} = {
+        url = ni.atlassian.site_url;
+        email = ni.atlassian.email;
+      };
+    };
   };
 }

@@ -555,6 +555,113 @@ in {
           description = "Enable Podman container runtime";
         };
       };
+
+      appstore = {
+        apps = mkOption {
+          type = types.attrsOf types.int;
+          default = {};
+          description = "App Store apps to install (name -> Apple ID)";
+          example = { Xcode = 497799835; };
+        };
+      };
+
+      tailscale = {
+        enable = mkOption {
+          type = types.bool;
+          default = false;
+          description = "Enable Tailscale VPN client";
+        };
+      };
+
+      amimori = {
+        enable = mkOption {
+          type = types.bool;
+          default = false;
+          description = "Enable amimori network profiler daemon";
+        };
+      };
+    };
+
+    # ── Tools ───────────────────────────────────────────────────
+    tools = {
+      editor = mkOption {
+        type = types.str;
+        default = "blnvim";
+        description = "Default editor";
+      };
+
+      claude = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable Claude Code integration";
+        };
+      };
+
+      cursor = {
+        enable = mkOption {
+          type = types.bool;
+          default = false;
+          description = "Enable Cursor IDE configuration";
+        };
+      };
+
+      mcp_services = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable MCP service daemons (zoekt, codesearch, tend)";
+        };
+      };
+
+      window_manager = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable window management (AeroSpace)";
+        };
+      };
+
+      stylix = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable Stylix color theme targets";
+        };
+      };
+    };
+
+    # ── Atlassian ───────────────────────────────────────────────
+    atlassian = {
+      enable = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Enable Atlassian CLI integration";
+      };
+
+      site = mkOption {
+        type = types.str;
+        default = "";
+        description = "Atlassian site name (e.g. 'mycompany')";
+      };
+
+      site_url = mkOption {
+        type = types.str;
+        default = "";
+        description = "Atlassian site URL";
+      };
+
+      email = mkOption {
+        type = types.str;
+        default = "";
+        description = "Atlassian account email";
+      };
+
+      account_id = mkOption {
+        type = types.str;
+        default = "";
+        description = "Atlassian account ID";
+      };
     };
 
     # ── SSH Server ──────────────────────────────────────────────

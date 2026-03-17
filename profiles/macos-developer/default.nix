@@ -140,6 +140,26 @@ in {
     casks = ni.macos.homebrew.casks;
   };
 
+  # ── App Store ─────────────────────────────────────────────
+  homebrew.masApps = lib.mkIf (ni.macos.appstore.apps != {}) ni.macos.appstore.apps;
+
+  # ── Tailscale ─────────────────────────────────────────────
+  blackmatter.components.tailscale = lib.mkIf ni.macos.tailscale.enable {
+    enable = true;
+    role = "client";
+    acceptRoutes = true;
+  };
+
+  # ── Amimori ───────────────────────────────────────────────
+  services.amimori = lib.mkIf ni.macos.amimori.enable {
+    enable = true;
+  };
+
+  # ── Containers ────────────────────────────────────────────
+  blackmatter.components.podman = lib.mkIf ni.macos.containers.podman {
+    enable = true;
+  };
+
   # ── Node identity ───────────────────────────────────────────
   networking.hostName = ni.hostname;
 
