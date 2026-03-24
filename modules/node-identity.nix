@@ -322,7 +322,107 @@ in {
           };
         });
         default = [];
-        description = "VPN peer configurations (WireGuard)";
+        description = "VPN peer configurations (WireGuard) — legacy, prefer vpn_links";
+      };
+
+      vpn_links = mkOption {
+        type = types.listOf (types.submodule {
+          options = {
+            name = mkOption {
+              type = types.str;
+              description = "WireGuard interface name (e.g., wg-k8s)";
+            };
+            private_key_file = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+              description = "Path to WireGuard private key file";
+            };
+            listen_port = mkOption {
+              type = types.nullOr types.int;
+              default = null;
+              description = "UDP listen port (null = client mode)";
+            };
+            address = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+              description = "Interface address with prefix (e.g., 10.100.0.1/24)";
+            };
+            profile = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+              description = "Link profile (k8s-control-plane, k8s-full, site-to-site, mesh)";
+            };
+            persistent_keepalive = mkOption {
+              type = types.nullOr types.int;
+              default = null;
+              description = "Default keepalive for all peers (seconds)";
+            };
+            mtu = mkOption {
+              type = types.nullOr types.int;
+              default = null;
+              description = "Interface MTU";
+            };
+            dns = mkOption {
+              type = types.listOf types.str;
+              default = [];
+              description = "DNS servers for this link";
+            };
+            peers = mkOption {
+              type = types.listOf (types.submodule {
+                options = {
+                  public_key = mkOption {
+                    type = types.nullOr types.str;
+                    default = null;
+                  };
+                  endpoint = mkOption {
+                    type = types.nullOr types.str;
+                    default = null;
+                  };
+                  allowed_ips = mkOption {
+                    type = types.listOf types.str;
+                    default = [];
+                  };
+                  persistent_keepalive = mkOption {
+                    type = types.nullOr types.int;
+                    default = null;
+                  };
+                  preshared_key_file = mkOption {
+                    type = types.nullOr types.str;
+                    default = null;
+                  };
+                };
+              });
+              default = [];
+              description = "WireGuard peers";
+            };
+            firewall = mkOption {
+              type = types.submodule {
+                options = {
+                  trust_interface = mkOption {
+                    type = types.bool;
+                    default = false;
+                  };
+                  allowed_tcp_ports = mkOption {
+                    type = types.listOf types.int;
+                    default = [];
+                  };
+                  allowed_udp_ports = mkOption {
+                    type = types.listOf types.int;
+                    default = [];
+                  };
+                  incoming_udp_port = mkOption {
+                    type = types.nullOr types.int;
+                    default = null;
+                  };
+                };
+              };
+              default = {};
+              description = "Per-link firewall configuration";
+            };
+          };
+        });
+        default = [];
+        description = "WireGuard VPN link configurations for blackmatter-vpn";
       };
     };
 

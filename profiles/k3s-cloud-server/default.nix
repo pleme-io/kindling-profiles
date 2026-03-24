@@ -65,6 +65,36 @@ in {
     };
   };
 
+  # ── VPN ────────────────────────────────────────────────────
+  # Wire kindling vpn_links to blackmatter-vpn module
+  services.blackmatter.vpn = lib.mkIf (ni.network.vpn_links != []) {
+    enable = true;
+    links = builtins.listToAttrs (map (link: {
+      name = link.name;
+      value = {
+        privateKeyFile = link.private_key_file;
+        listenPort = link.listen_port or 0;
+        address = link.address;
+        mtu = link.mtu or 1420;
+        profile = link.profile;
+        persistentKeepalive = link.persistent_keepalive;
+        peers = map (peer: {
+          publicKey = peer.public_key;
+          endpoint = peer.endpoint;
+          allowedIPs = peer.allowed_ips;
+          persistentKeepalive = peer.persistent_keepalive;
+          presharedKeyFile = peer.preshared_key_file;
+        }) link.peers;
+        firewall = {
+          trustInterface = link.firewall.trust_interface;
+          allowedTCPPorts = link.firewall.allowed_tcp_ports;
+          allowedUDPPorts = link.firewall.allowed_udp_ports;
+          incomingUDPPort = link.firewall.incoming_udp_port;
+        };
+      };
+    }) ni.network.vpn_links);
+  };
+
   # ── System Tuning ───────────────────────────────────────────
   blackmatter.profiles.blizzard.optimizations = {
     enable = true;
