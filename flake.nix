@@ -28,7 +28,7 @@
   } @ inputs: {
     # Module exports — each target type imports the node identity interface
     darwinModules.default = {imports = [./modules/node-identity.nix];};
-    nixosModules.default = {imports = [./modules/node-identity.nix];};
+    nixosModules.default = {imports = [./modules/node-identity.nix inputs.blackmatter.nixosModules.default];};
     homeManagerModules.default = {imports = [./modules/node-identity.nix];};
 
     # Profile library — used by kindling's generated flake
