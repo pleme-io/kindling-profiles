@@ -11,6 +11,10 @@
       url = "github:pleme-io/substrate";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    nixos-generators = {
+      url = "github:nix-community/nixos-generators";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     sops-nix = {
       url = "github:Mic92/sops-nix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -25,11 +29,52 @@
     self,
     nixpkgs,
     ...
-  } @ inputs: {
+  } @ inputs: let
+    # AMI builder via nixos-generators — produces Amazon-format images
+    mkAmi = system: inputs.nixos-generators.nixosGenerate {
+      inherit system;
+      format = "amazon";
+      modules = [
+        self.nixosModules.default
+        ./profiles/k3s-cloud-server
+        {
+          # Minimal node identity for AMI build (overridden at boot by kindling)
+          kindling.nodeIdentity = {
+            profile = "k3s-cloud-server";
+            hostname = "ami-builder";
+            user = { name = "root"; uid = 0; };
+            secrets.provider = "sops";
+            hardware = {
+              platform = system;
+              cpu.vendor = if system == "x86_64-linux" then "amd" else "arm";
+              kernel.modules = [];
+              kernel.params = [];
+            };
+            network.firewall = {
+              allowed_tcp_ports = [];
+              allowed_udp_ports = [];
+            };
+            network.vpn_links = [];
+            kubernetes = {
+              role = "server";
+              cluster_cidr = null;
+              service_cidr = null;
+            };
+            nix.trusted_users = ["root"];
+            nix.attic.token_file = null;
+          };
+        }
+      ];
+    };
+  in {
     # Module exports — each target type imports the node identity interface
     darwinModules.default = {imports = [./modules/node-identity.nix];};
     nixosModules.default = {imports = [./modules/node-identity.nix inputs.blackmatter.nixosModules.blackmatter];};
     homeManagerModules.default = {imports = [./modules/node-identity.nix];};
+
+    # AMI packages — built by CodeBuild for EC2 import-image
+    packages.x86_64-linux.ami = mkAmi "x86_64-linux";
+    packages.aarch64-linux.ami = mkAmi "aarch64-linux";
 
     # Profile library — used by kindling's generated flake
     lib.profiles = {
