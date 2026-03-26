@@ -166,4 +166,19 @@ in {
   services.smartd.enable = true;
   services.logrotate.enable = true;
   services.fstrim.enable = true;
+
+  # ── Disable unnecessary services from blackmatter aggregator ─
+  # The blackmatter NixOS module includes security, android, services
+  # modules that enable things we don't need on a K3s cloud server.
+  services.tor.enable = lib.mkForce false;
+  services.postgresql.enable = lib.mkForce false;
+  virtualisation.docker.enable = lib.mkForce false;
+  blackmatter.security.tools = {
+    network.enable = lib.mkForce false;
+    web.enable = lib.mkForce false;
+    osint.enable = lib.mkForce false;
+    passwords.enable = lib.mkForce false;
+    privacy.enable = lib.mkForce false;
+  };
+  blackmatter.security.hardening.enable = lib.mkForce false;
 }
