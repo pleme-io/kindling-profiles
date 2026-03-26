@@ -97,7 +97,9 @@ in {
     };
     sops = lib.mkIf (ni.secrets.provider == "sops") {
       enable = true;
-      ageKeyFile = ni.secrets.age_key_file;
+      ageKeyFile = if ni.secrets.age_key_file != null
+        then ni.secrets.age_key_file
+        else "/var/lib/sops-nix/key.txt";
     };
   };
 
