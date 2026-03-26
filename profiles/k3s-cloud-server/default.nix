@@ -9,11 +9,15 @@
   config,
   lib,
   pkgs,
+  modulesPath,
   ...
 }: let
   ni = config.kindling.nodeIdentity;
   k3sDefaults = import ../../lib/k3s-defaults.nix {inherit lib;};
 in {
+  # Import the Amazon AMI base module for EC2 hardware, fileSystems, boot loader
+  imports = [ "${modulesPath}/virtualisation/amazon-image.nix" ];
+
   # NOTE: blackmatter NixOS modules must be loaded by the host repo.
   # This profile only SETS blackmatter options — it does not import modules.
 
