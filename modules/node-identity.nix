@@ -540,10 +540,28 @@ in {
         description = "FluxCD source repository URL";
       };
 
+      auth = mkOption {
+        type = types.str;
+        default = "token";
+        description = "Authentication method for git access (ssh or token)";
+      };
+
+      token_file = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Path to file containing the access token (from sops-nix)";
+      };
+
+      ssh_key_file = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Path to SSH private key file (from sops-nix)";
+      };
+
       reconcile = mkOption {
         type = types.attrs;
         default = {};
-        description = "FluxCD reconciliation settings";
+        description = "FluxCD reconciliation settings (branch, path, interval, prune)";
       };
     };
 

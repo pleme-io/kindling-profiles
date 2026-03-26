@@ -275,6 +275,9 @@
       "properties": {
         "enable": { "type": "boolean", "default": false },
         "source": { "type": "string" },
+        "auth": { "type": "string", "default": "token", "enum": ["ssh", "token"] },
+        "token_file": { "type": "string" },
+        "ssh_key_file": { "type": "string" },
         "reconcile": { "type": "object" }
       }
     },

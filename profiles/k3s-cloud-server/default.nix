@@ -79,6 +79,28 @@ in {
     }) ni.network.vpn_links);
   };
 
+  # ── FluxCD (GitOps Bootstrap) ─────────────────────────────
+  services.blackmatter.fluxcd = lib.mkIf ni.fluxcd.enable {
+    enable = true;
+    source = {
+      url = ni.fluxcd.source;
+      branch = ni.fluxcd.reconcile.branch or "main";
+      interval = ni.fluxcd.reconcile.interval or "1m0s";
+      auth = ni.fluxcd.auth;
+      tokenFile = lib.mkIf (ni.fluxcd.auth == "token") ni.fluxcd.token_file;
+      sshKeyFile = lib.mkIf (ni.fluxcd.auth == "ssh") ni.fluxcd.ssh_key_file;
+    };
+    reconcile = {
+      path = ni.fluxcd.reconcile.path or ".";
+      interval = ni.fluxcd.reconcile.interval or "2m0s";
+      prune = ni.fluxcd.reconcile.prune or true;
+    };
+    sops = lib.mkIf (ni.secrets.provider == "sops") {
+      enable = true;
+      ageKeyFile = ni.secrets.age_key_file;
+    };
+  };
+
   # ── Boot & System Tuning ──────────────────────────────────
   boot.loader.timeout = lib.mkDefault 3;
   boot.loader.grub.configurationLimit = lib.mkDefault 20;

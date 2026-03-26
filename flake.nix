@@ -57,9 +57,9 @@
         components = ["k3s" "docker" "github-actions-runner"];
       };
       k3s-cloud-server = {
-        description = "NixOS K3s server for cloud hosts (Hetzner/AWS) with WireGuard mesh";
+        description = "NixOS K3s server for cloud hosts (Hetzner/AWS) with WireGuard mesh and FluxCD";
         platform = "linux";
-        components = ["k3s" "wireguard" "firewall"];
+        components = ["k3s" "fluxcd" "wireguard" "firewall"];
       };
     };
   };
