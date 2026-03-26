@@ -232,7 +232,7 @@ in {
       };
 
       filesystems = mkOption {
-        type = types.attrs;
+        type = types.nullOr types.attrs;
         default = {};
         description = "Filesystem mount configuration";
       };
@@ -485,19 +485,19 @@ in {
       };
 
       server_addr = mkOption {
-        type = types.str;
-        default = "";
+        type = types.nullOr types.str;
+        default = null;
         description = "K3s server address (for agents joining a cluster)";
       };
 
       cluster_cidr = mkOption {
-        type = types.str;
+        type = types.nullOr types.str;
         default = "10.42.0.0/16";
         description = "Pod network CIDR";
       };
 
       service_cidr = mkOption {
-        type = types.str;
+        type = types.nullOr types.str;
         default = "10.43.0.0/16";
         description = "Service network CIDR";
       };
@@ -596,7 +596,7 @@ in {
       };
 
       codesearch = mkOption {
-        type = types.attrs;
+        type = types.nullOr types.attrs;
         default = {};
         description = "Codesearch daemon configuration";
       };
