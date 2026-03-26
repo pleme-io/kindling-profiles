@@ -89,11 +89,13 @@ in {
     SystemMaxUse=200M
   '';
 
-  systemd.extraConfig = ''
-    DefaultTimeoutStartSec=30s
-    DefaultTimeoutStopSec=30s
-  '';
+  systemd.settings.Manager = {
+    DefaultTimeoutStartSec = "30s";
+    DefaultTimeoutStopSec = "30s";
+  };
   systemd.network.wait-online.enable = lib.mkDefault false;
+
+  system.stateVersion = lib.mkDefault "25.11";
 
   # ── SSH ─────────────────────────────────────────────────────
   services.openssh = {
