@@ -11,7 +11,16 @@
   cfg = config.kindling.nodeIdentity;
 in {
   options.kindling.nodeIdentity = {
+    # Allow extra fields from node.json without errors
+    _module.freeformType = types.attrsOf types.anything;
+
     # ── Core identity ──────────────────────────────────────────
+    version = mkOption {
+      type = types.str;
+      default = "1";
+      description = "Node identity schema version";
+    };
+
     profile = mkOption {
       type = types.str;
       description = "Machine profile name from kindling-profiles";
