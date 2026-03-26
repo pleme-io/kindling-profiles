@@ -99,20 +99,15 @@ in {
     }) ni.network.vpn_links);
   };
 
-  # ── System Tuning ───────────────────────────────────────────
-  blackmatter.profiles.blizzard.optimizations = {
-    enable = true;
-    cpuGovernor = "performance";
+  # ── System Tuning (direct, not via blizzard optimizations to avoid sysctl conflicts) ──
+  boot.kernelParams = [
+    "transparent_hugepage=never"
+    "skew_tick=1"
+    "nmi_watchdog=0"
+    "nowatchdog"
+  ] ++ ni.hardware.kernel.params;
 
-    kernelParams = [
-      "transparent_hugepage=never"
-      "skew_tick=1"
-      "nmi_watchdog=0"
-      "nowatchdog"
-    ] ++ ni.hardware.kernel.params;
-
-    nvme.optimize = true;
-  };
+  powerManagement.cpuFreqGovernor = lib.mkDefault "performance";
 
   blackmatter.components.baseSystemTuning = {
     enable = true;
