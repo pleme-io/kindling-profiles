@@ -44,14 +44,15 @@ in {
   };
 
   # ── Hardware ────────────────────────────────────────────────
+  # Cloud instances default to intel/x86_64 when node.json has empty values
   blackmatter.profiles.blizzard.hardware = {
-    cpu.type = ni.hardware.cpu.vendor;
+    cpu.type = if ni.hardware.cpu.vendor != "" then ni.hardware.cpu.vendor else "intel";
     kernel = {
       modules = k3sDefaults.k3sKernelModules ++ ni.hardware.kernel.modules;
       initrdModules = ["xhci_pci" "ahci" "nvme" "usbhid" "sd_mod"];
       blacklist = ["pcspkr"];
     };
-    platform = ni.hardware.platform;
+    platform = if ni.hardware.platform != "" then ni.hardware.platform else "x86_64-linux";
   };
 
   # ── Networking ──────────────────────────────────────────────
