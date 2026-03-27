@@ -163,6 +163,8 @@
               "systemctl restart nix-daemon && sleep 2"
               "echo '=== applying NixOS configuration ==='"
               "nixos-rebuild switch --flake $FLAKE_REF"
+              "echo '=== running AMI validation ==='"
+              "kindling ami-test"
               "echo '=== cleanup ==='"
               "nix-collect-garbage -d"
               "rm -f /root/.config/nix/nix.conf"
