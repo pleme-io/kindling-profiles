@@ -4,6 +4,7 @@ version: 0.2
 #
 # Environment variables (set by CodeBuild project):
 #   ARTIFACTS_BUCKET, AMI_NAME, SSM_PARAMETER_NAME, VMIMPORT_ROLE_NAME
+#   GITHUB_TOKEN — for fetching private flake inputs
 
 phases:
   install:
@@ -12,6 +13,8 @@ phases:
       - . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
       - nix-daemon &
       - sleep 2
+      - mkdir -p ~/.config/nix
+      - echo "access-tokens = github.com=${GITHUB_TOKEN}" >> ~/.config/nix/nix.conf
 
   build:
     commands:
