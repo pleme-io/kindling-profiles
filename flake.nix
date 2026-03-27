@@ -42,27 +42,12 @@
         self.nixosModules.default
         inputs.sops-nix.nixosModules.sops
         ./profiles/k3s-cloud-server
-        # Force QEMU software emulation (no /dev/kvm needed in CodeBuild)
-        # Wrap qemu_kvm binary to prepend -accel tcg, keeping hostCpuOnly (small binary)
-        ({ pkgs, lib, ... }: {
-          nixpkgs.overlays = [
-            (final: prev: {
-              qemu_kvm = prev.runCommand "qemu-tcg" { nativeBuildInputs = [ prev.makeWrapper ]; } ''
-                mkdir -p $out/bin
-                for f in ${prev.qemu_kvm}/bin/*; do
-                  name=$(basename "$f")
-                  if [[ "$name" == qemu-system-* ]]; then
-                    makeWrapper "$f" "$out/bin/$name" --add-flags "-accel tcg"
-                  else
-                    ln -s "$f" "$out/bin/$name"
-                  fi
-                done
-                # Copy share directory for firmware/bios files
-                ln -s ${prev.qemu_kvm}/share $out/share
-              '';
-            })
-          ];
-        })
+        # Increase disk image size — default is too small for the NixOS closure
+        # with k3s + blackmatter modules (~5GB). Also force diskSize to avoid
+        # "No space left on device" during install-to-disk phase.
+        {
+          virtualisation.diskSize = 8192; # 8GB
+        }
         {
           # Minimal node identity for AMI build (overridden at boot by kindling)
           kindling.nodeIdentity = {
