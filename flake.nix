@@ -69,8 +69,6 @@
               nix.trusted_users = ["root"];
               nix.attic.token_file = null;
             };
-            # Drop KVM requirement — qemu-img is userspace, no VM needed
-            virtualisation.diskImage.requiredSystemFeatures = [];
           }
         ];
       };
