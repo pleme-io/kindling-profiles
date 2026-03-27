@@ -38,22 +38,16 @@
     mkAmi = system: inputs.nixos-generators.nixosGenerate {
       inherit system;
       format = "amazon";
-      # Override nixpkgs to use software QEMU (no KVM) for disk image builds.
-      # CodeBuild doesn't have /dev/kvm. Software emulation adds ~5 min.
-      pkgs = import nixpkgs {
-        inherit system;
-        overlays = [
-          (final: prev: {
-            # Replace qemu_kvm (hostCpuOnly, tries KVM) with full qemu
-            # which falls back to TCG software emulation when /dev/kvm missing
-            qemu_kvm = prev.qemu;
-          })
-        ];
-      };
       modules = [
         self.nixosModules.default
         inputs.sops-nix.nixosModules.sops
         ./profiles/k3s-cloud-server
+        # Override qemu_kvm to use full qemu (software emulation, no /dev/kvm needed)
+        ({ ... }: {
+          nixpkgs.overlays = [
+            (final: prev: { qemu_kvm = prev.qemu; })
+          ];
+        })
         {
           # Minimal node identity for AMI build (overridden at boot by kindling)
           kindling.nodeIdentity = {
