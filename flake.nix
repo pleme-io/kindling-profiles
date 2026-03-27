@@ -192,6 +192,9 @@
         inputs.sops-nix.nixosModules.sops
         inputs.kindling.nixosModules.default
         inputs.home-manager.nixosModules.home-manager
+        # Preserve EC2/Amazon modules from the base AMI — amazon-init processes
+        # userdata (cloud-init) at boot, writing /etc/pangea/cluster-config.json
+        "${nixpkgs}/nixos/modules/virtualisation/amazon-image.nix"
         ./profiles/k3s-cloud-server
         (amiNodeIdentity "x86_64-linux")
         {
