@@ -43,9 +43,15 @@
         inputs.sops-nix.nixosModules.sops
         ./profiles/k3s-cloud-server
         # Override qemu_kvm to use full qemu (software emulation, no /dev/kvm needed)
+        # Must override in both pkgs and buildPackages since vmTools uses buildPackages.qemu_kvm
         ({ ... }: {
           nixpkgs.overlays = [
-            (final: prev: { qemu_kvm = prev.qemu; })
+            (final: prev: {
+              qemu_kvm = prev.qemu;
+              buildPackages = prev.buildPackages // {
+                qemu_kvm = prev.buildPackages.qemu;
+              };
+            })
           ];
         })
         {
