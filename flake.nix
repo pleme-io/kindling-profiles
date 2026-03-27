@@ -162,7 +162,13 @@
               "if [ -n \"$GITHUB_TOKEN\" ]; then echo \"access-tokens = github.com=$GITHUB_TOKEN\" >> /root/.config/nix/nix.conf; fi"
               "systemctl restart nix-daemon && sleep 2"
               "echo '=== applying NixOS configuration ==='"
-              "nixos-rebuild switch --flake $FLAKE_REF"
+              "nixos-rebuild switch --flake $FLAKE_REF || true"
+              # Stop kindling bootstrap — it fails without cluster-config.json (expected).
+              # The service is installed and will run at real instance boot when cloud-init
+              # writes /etc/pangea/cluster-config.json.
+              "systemctl stop kindling-server-bootstrap.service 2>/dev/null || true"
+              "systemctl reset-failed kindling-server-bootstrap.service 2>/dev/null || true"
+              "rm -rf /var/lib/kindling/server-state.json 2>/dev/null || true"
               "echo '=== cleanup ==='"
               "nix-collect-garbage -d"
               "rm -f /root/.config/nix/nix.conf"
