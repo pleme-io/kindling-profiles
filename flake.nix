@@ -23,6 +23,10 @@
       url = "github:cachix/devenv";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    ami-forge = {
+      url = "github:pleme-io/ami-forge";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = {
@@ -75,6 +79,67 @@
     # AMI packages — built by CodeBuild for EC2 import-image
     packages.x86_64-linux.ami = mkAmi "x86_64-linux";
     packages.aarch64-linux.ami = mkAmi "aarch64-linux";
+
+    # Nix-builder OCI images — used by CI/CD to build AMIs
+    packages.x86_64-linux.nix-builder-image = let
+      pkgs = import nixpkgs { system = "x86_64-linux"; };
+    in pkgs.dockerTools.buildImage {
+      name = "ghcr.io/pleme-io/nix-builder";
+      tag = "latest";
+
+      copyToRoot = pkgs.buildEnv {
+        name = "nix-builder-root";
+        paths = [
+          pkgs.nix
+          pkgs.awscli2
+          inputs.ami-forge.packages.x86_64-linux.default
+          pkgs.git
+          pkgs.coreutils
+          pkgs.bash
+          pkgs.cacert
+        ];
+        pathsToLink = [ "/bin" "/etc" "/share" ];
+      };
+
+      config = {
+        Env = [
+          "NIX_CONFIG=experimental-features = nix-command flakes"
+          "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
+          "PATH=/bin"
+        ];
+        Cmd = [ "/bin/bash" ];
+      };
+    };
+
+    packages.aarch64-linux.nix-builder-image = let
+      pkgs = import nixpkgs { system = "aarch64-linux"; };
+    in pkgs.dockerTools.buildImage {
+      name = "ghcr.io/pleme-io/nix-builder";
+      tag = "latest";
+
+      copyToRoot = pkgs.buildEnv {
+        name = "nix-builder-root";
+        paths = [
+          pkgs.nix
+          pkgs.awscli2
+          inputs.ami-forge.packages.aarch64-linux.default
+          pkgs.git
+          pkgs.coreutils
+          pkgs.bash
+          pkgs.cacert
+        ];
+        pathsToLink = [ "/bin" "/etc" "/share" ];
+      };
+
+      config = {
+        Env = [
+          "NIX_CONFIG=experimental-features = nix-command flakes"
+          "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
+          "PATH=/bin"
+        ];
+        Cmd = [ "/bin/bash" ];
+      };
+    };
 
     # Profile library — used by kindling's generated flake
     lib.profiles = {
