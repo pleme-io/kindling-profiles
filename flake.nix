@@ -42,8 +42,27 @@
         self.nixosModules.default
         inputs.sops-nix.nixosModules.sops
         ./profiles/k3s-cloud-server
-        # QEMU_OPTS="-accel tcg" forces software emulation (no /dev/kvm needed)
-        # Set in build-ami app + buildspec.yml, propagated via sandbox=false
+        # Force QEMU software emulation (no /dev/kvm needed in CodeBuild)
+        # Override vmTools to inject QEMU_OPTS into the builder derivation
+        ({ pkgs, ... }: {
+          nixpkgs.overlays = [
+            (final: prev: {
+              vmTools = prev.vmTools.override {
+                # Inject "-accel tcg" via QEMU_OPTS in the vm run script
+                rootModules = prev.vmTools.rootModules or [
+                  "virtio_pci" "virtio_mmio" "virtio_blk" "virtio_balloon"
+                  "virtio_rng" "ext4" "unix" "9p" "9pnet_virtio" "crc32c_generic"
+                  "virtiofs"
+                ];
+              } // {
+                # Wrap runInLinuxVM to always set QEMU_OPTS
+                runInLinuxVM = drv: prev.vmTools.runInLinuxVM (drv.overrideAttrs (old: {
+                  QEMU_OPTS = "-accel tcg";
+                }));
+              };
+            })
+          ];
+        })
         {
           # Minimal node identity for AMI build (overridden at boot by kindling)
           kindling.nodeIdentity = {
@@ -153,9 +172,8 @@
       type = "app";
       program = toString (pkgs.writeShellScript "build-ami" ''
         set -euo pipefail
-        export QEMU_OPTS="''${QEMU_OPTS:--accel tcg}"
         echo "[build-ami] Building NixOS AMI image..."
-        nix build .#packages.x86_64-linux.ami --out-link result --no-write-lock-file --option sandbox false --impure
+        nix build .#packages.x86_64-linux.ami --out-link result --no-write-lock-file
 
         echo "[build-ami] Running ami-forge pipeline..."
         ${amiForge}/bin/ami-forge build \
