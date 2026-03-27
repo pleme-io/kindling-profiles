@@ -146,10 +146,12 @@
             inline = [
               "set -euo pipefail"
               "echo '=== configuring nix ==='"
-              "grep -q 'experimental-features' /etc/nix/nix.conf 2>/dev/null || echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf"
-              "echo 'max-substitution-jobs = 64' >> /etc/nix/nix.conf"
-              "echo 'narinfo-cache-negative-ttl = 0' >> /etc/nix/nix.conf"
-              "if [ -n \"$GITHUB_TOKEN\" ]; then mkdir -p /root/.config/nix && echo \"access-tokens = github.com=$GITHUB_TOKEN\" >> /root/.config/nix/nix.conf; fi"
+              # NixOS /etc/nix/nix.conf is read-only (nix store). Use drop-in config.
+              "mkdir -p /root/.config/nix"
+              "echo 'experimental-features = nix-command flakes' >> /root/.config/nix/nix.conf"
+              "echo 'max-substitution-jobs = 64' >> /root/.config/nix/nix.conf"
+              "echo 'narinfo-cache-negative-ttl = 0' >> /root/.config/nix/nix.conf"
+              "if [ -n \"$GITHUB_TOKEN\" ]; then echo \"access-tokens = github.com=$GITHUB_TOKEN\" >> /root/.config/nix/nix.conf; fi"
               "systemctl restart nix-daemon && sleep 2"
               "echo '=== applying NixOS configuration ==='"
               "nixos-rebuild switch --flake $FLAKE_REF"
