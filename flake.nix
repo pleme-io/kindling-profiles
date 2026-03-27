@@ -142,24 +142,17 @@
         };
         build = [{
           sources = ["source.amazon-ebs.nixos"];
-          provisioner = [{
-            type = "shell";
+          provisioner.shell = {
             inline = [
               "set -euo pipefail"
-
-              # Configure nix for speed + private repos
               "echo '=== configuring nix ==='"
               "grep -q 'experimental-features' /etc/nix/nix.conf 2>/dev/null || echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf"
               "echo 'max-substitution-jobs = 64' >> /etc/nix/nix.conf"
               "echo 'narinfo-cache-negative-ttl = 0' >> /etc/nix/nix.conf"
               "if [ -n \"$GITHUB_TOKEN\" ]; then mkdir -p /root/.config/nix && echo \"access-tokens = github.com=$GITHUB_TOKEN\" >> /root/.config/nix/nix.conf; fi"
               "systemctl restart nix-daemon && sleep 2"
-
-              # Apply the NixOS configuration
               "echo '=== applying NixOS configuration ==='"
               "nixos-rebuild switch --flake $FLAKE_REF"
-
-              # Minimize AMI size
               "echo '=== cleanup ==='"
               "nix-collect-garbage -d"
               "rm -f /root/.config/nix/nix.conf"
@@ -172,12 +165,11 @@
               "GITHUB_TOKEN=\${var.github_token}"
               "FLAKE_REF=\${var.flake_ref}"
             ];
-          }];
-          post-processor = [{
-            type = "manifest";
+          };
+          post-processor.manifest = {
             output = "packer-manifest.json";
             strip_path = true;
-          }];
+          };
         }];
       };
     in pkgs.writeText "packer-template.pkr.json" (builtins.toJSON template);
