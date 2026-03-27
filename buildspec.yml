@@ -1,14 +1,9 @@
 version: 0.2
 
-# NixOS AMI generation — install nix, build image, delegate to ami-forge.
+# NixOS AMI generation — all logic in nix run .#build-ami
 #
-# Environment variables (set by CodeBuild project, not here):
-#   AWS_DEFAULT_REGION  - AWS region for API calls
-#   NIX_FLAKE_REF       - Nix flake reference for the AMI image
-#   ARTIFACTS_BUCKET    - S3 bucket for transit upload
-#   AMI_NAME            - Constant AMI name (rotation key)
-#   SSM_PARAMETER_NAME  - SSM parameter to update with AMI ID
-#   VMIMPORT_ROLE_NAME  - IAM role for VM Import/Export
+# Environment variables (set by CodeBuild project):
+#   ARTIFACTS_BUCKET, AMI_NAME, SSM_PARAMETER_NAME, VMIMPORT_ROLE_NAME
 
 phases:
   install:
@@ -19,16 +14,4 @@ phases:
   build:
     commands:
       - . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-      - nix build "${NIX_FLAKE_REF}" --out-link result --no-write-lock-file
-
-  post_build:
-    commands:
-      - . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-      - >-
-        nix run github:pleme-io/ami-forge --no-write-lock-file --
-        build
-        --image result/
-        --bucket "${ARTIFACTS_BUCKET}"
-        --ami-name "${AMI_NAME}"
-        --ssm "${SSM_PARAMETER_NAME}"
-        --role-name "${VMIMPORT_ROLE_NAME}"
+      - nix run .#build-ami --no-write-lock-file

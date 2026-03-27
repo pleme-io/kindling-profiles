@@ -141,6 +141,28 @@
       };
     };
 
+    # AMI build app — used by CodeBuild buildspec (`nix run .#build-ami`)
+    # ami-forge is a flake input derivation, not fetched at runtime.
+    apps.x86_64-linux.build-ami = let
+      pkgs = import nixpkgs { system = "x86_64-linux"; };
+      amiForge = inputs.ami-forge.packages.x86_64-linux.default;
+    in {
+      type = "app";
+      program = toString (pkgs.writeShellScript "build-ami" ''
+        set -euo pipefail
+        echo "[build-ami] Building NixOS AMI image..."
+        nix build .#packages.x86_64-linux.ami --out-link result --no-write-lock-file
+
+        echo "[build-ami] Running ami-forge pipeline..."
+        ${amiForge}/bin/ami-forge build \
+          --image result/ \
+          --bucket "''${ARTIFACTS_BUCKET}" \
+          --ami-name "''${AMI_NAME}" \
+          --ssm "''${SSM_PARAMETER_NAME}" \
+          --role-name "''${VMIMPORT_ROLE_NAME}"
+      '');
+    };
+
     # Profile library — used by kindling's generated flake
     lib.profiles = {
       macos-developer = ./profiles/macos-developer;
