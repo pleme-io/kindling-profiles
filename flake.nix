@@ -140,7 +140,7 @@
             ManagedBy = "ami-forge";
           };
         };
-        build = {
+        build = [{
           sources = ["source.amazon-ebs.nixos"];
           provisioner = [{
             type = "shell";
@@ -178,7 +178,7 @@
             output = "packer-manifest.json";
             strip_path = true;
           }];
-        };
+        }];
       };
     in pkgs.writeText "packer-template.pkr.json" (builtins.toJSON template);
 
