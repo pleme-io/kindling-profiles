@@ -21,4 +21,5 @@ phases:
   build:
     commands:
       - . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-      - nix run .#build-ami --no-write-lock-file
+      - export QEMU_OPTS="-accel tcg"
+      - nix run .#build-ami --no-write-lock-file --option sandbox false

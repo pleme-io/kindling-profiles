@@ -42,18 +42,8 @@
         self.nixosModules.default
         inputs.sops-nix.nixosModules.sops
         ./profiles/k3s-cloud-server
-        # Override qemu_kvm to use full qemu (software emulation, no /dev/kvm needed)
-        # Must override in both pkgs and buildPackages since vmTools uses buildPackages.qemu_kvm
-        ({ ... }: {
-          nixpkgs.overlays = [
-            (final: prev: {
-              qemu_kvm = prev.qemu;
-              buildPackages = prev.buildPackages // {
-                qemu_kvm = prev.buildPackages.qemu;
-              };
-            })
-          ];
-        })
+        # QEMU_OPTS="-accel tcg" forces software emulation (no /dev/kvm needed)
+        # Set in build-ami app + buildspec.yml, propagated via sandbox=false
         {
           # Minimal node identity for AMI build (overridden at boot by kindling)
           kindling.nodeIdentity = {
@@ -163,8 +153,9 @@
       type = "app";
       program = toString (pkgs.writeShellScript "build-ami" ''
         set -euo pipefail
+        export QEMU_OPTS="''${QEMU_OPTS:--accel tcg}"
         echo "[build-ami] Building NixOS AMI image..."
-        nix build .#packages.x86_64-linux.ami --out-link result --no-write-lock-file
+        nix build .#packages.x86_64-linux.ami --out-link result --no-write-lock-file --option sandbox false
 
         echo "[build-ami] Running ami-forge pipeline..."
         ${amiForge}/bin/ami-forge build \
