@@ -23,6 +23,14 @@
       url = "github:cachix/devenv";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    kindling = {
+      url = "github:pleme-io/kindling";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    home-manager = {
+      url = "github:nix-community/home-manager/release-25.05";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = {
@@ -182,8 +190,18 @@
       modules = [
         self.nixosModules.default
         inputs.sops-nix.nixosModules.sops
+        inputs.kindling.nixosModules.default
+        inputs.home-manager.nixosModules.home-manager
         ./profiles/k3s-cloud-server
         (amiNodeIdentity "x86_64-linux")
+        {
+          # Enable kindling bootstrap service — reads /etc/pangea/cluster-config.json
+          # at boot and applies cluster-specific delta (VPN, k3s tokens, FluxCD)
+          services.kindling.server = {
+            enable = true;
+            package = inputs.kindling.packages.x86_64-linux.default;
+          };
+        }
       ];
     };
 
