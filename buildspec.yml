@@ -1,70 +1,34 @@
 version: 0.2
 
-# CodeBuild buildspec for NixOS AMI generation via nixos-generators.
+# NixOS AMI generation — install nix, build image, delegate to ami-forge.
 #
-# Pipeline: install Nix → build image → upload S3 → deregister old AMI →
-# import-image → tag → update SSM → delete S3 artifact.
-#
-# AMI rotation: constant name, old one force-deregistered before import.
-
-env:
-  variables:
-    AWS_DEFAULT_REGION: "us-east-1"
-    ARTIFACTS_BUCKET: "akeyless-dev-nixos-ami-artifacts"
-    SSM_PARAMETER_NAME: "/pangea/akeyless-dev/nixos-ami-id"
-    NIX_FLAKE_REF: "github:pleme-io/kindling-profiles#packages.x86_64-linux.ami"
-    AMI_NAME: "akeyless-dev-nixos-k3s-cloud-server"
+# Environment variables (set by CodeBuild project, not here):
+#   AWS_DEFAULT_REGION  - AWS region for API calls
+#   NIX_FLAKE_REF       - Nix flake reference for the AMI image
+#   ARTIFACTS_BUCKET    - S3 bucket for transit upload
+#   AMI_NAME            - Constant AMI name (rotation key)
+#   SSM_PARAMETER_NAME  - SSM parameter to update with AMI ID
+#   VMIMPORT_ROLE_NAME  - IAM role for VM Import/Export
 
 phases:
   install:
-    runtime-versions:
-      python: 3.12
     commands:
-      - echo "[install] Installing Nix..."
-      - sh <(curl -L https://nixos.org/nix/install) --no-daemon
-      - . /root/.nix-profile/etc/profile.d/nix.sh
-      - mkdir -p /root/.config/nix
-      - echo "experimental-features = nix-command flakes" > /root/.config/nix/nix.conf
-      - nix --version
-
-  pre_build:
-    commands:
-      - . /root/.nix-profile/etc/profile.d/nix.sh
-      - aws sts get-caller-identity
-      - export BUILD_ID=$(echo $CODEBUILD_BUILD_ID | tr ':' '-')
-      - export IMAGE_KEY="nixos-ami-${BUILD_ID}.raw"
-      - echo "[pre_build] bucket=${ARTIFACTS_BUCKET} ssm=${SSM_PARAMETER_NAME} ami=${AMI_NAME}"
+      - curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install linux --no-confirm --init none
+      - . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
 
   build:
     commands:
-      - . /root/.nix-profile/etc/profile.d/nix.sh
-      - echo "[build] Building NixOS AMI image..."
+      - . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
       - nix build "${NIX_FLAKE_REF}" --out-link result --no-write-lock-file
-      - ls -lh result/
-      - export RAW_IMAGE=$(find result/ -name "*.raw" -o -name "*.img" -o -name "*.vhd" | head -1)
-      - test -n "$RAW_IMAGE" || { echo "[build] ERROR No raw image found"; ls -lhR result/; exit 1; }
-      - echo "[build] Uploading ${RAW_IMAGE} to s3://${ARTIFACTS_BUCKET}/${IMAGE_KEY}"
-      - aws s3 cp "${RAW_IMAGE}" "s3://${ARTIFACTS_BUCKET}/${IMAGE_KEY}" --no-progress
 
   post_build:
     commands:
-      - export BUILD_ID=$(echo $CODEBUILD_BUILD_ID | tr ':' '-')
-      - export IMAGE_KEY="nixos-ami-${BUILD_ID}.raw"
-      - echo "[post_build] Deregistering old AMI named ${AMI_NAME} if exists..."
-      - OLD_AMI_ID=$(aws ec2 describe-images --owners self --filters "Name=name,Values=${AMI_NAME}" --query 'Images[0].ImageId' --output text 2>/dev/null || echo "None")
-      - 'if [ "$OLD_AMI_ID" != "None" ] && [ -n "$OLD_AMI_ID" ]; then OLD_SNAPS=$(aws ec2 describe-images --image-ids "$OLD_AMI_ID" --query "Images[0].BlockDeviceMappings[*].Ebs.SnapshotId" --output text); aws ec2 deregister-image --image-id "$OLD_AMI_ID"; echo "[post_build] Deregistered $OLD_AMI_ID"; for S in $OLD_SNAPS; do [ "$S" != "None" ] && aws ec2 delete-snapshot --snapshot-id "$S" && echo "[post_build] Deleted snapshot $S"; done; else echo "[post_build] No existing AMI — first build"; fi'
-      - echo "[post_build] Starting import-image..."
-      - IMPORT_TASK_ID=$(aws ec2 import-image --description "NixOS AMI from CodeBuild ${CODEBUILD_BUILD_ID}" --disk-containers "[{\"Description\":\"NixOS root\",\"Format\":\"raw\",\"UserBucket\":{\"S3Bucket\":\"${ARTIFACTS_BUCKET}\",\"S3Key\":\"${IMAGE_KEY}\"}}]" --role-name "akeyless-dev-nixos-ami-vmimport" --query 'ImportTaskId' --output text)
-      - echo "[post_build] Import task ${IMPORT_TASK_ID} — polling..."
-      - 'STATUS=active; for i in $(seq 1 60); do STATUS=$(aws ec2 describe-import-image-tasks --import-task-ids "$IMPORT_TASK_ID" --query "ImportImageTasks[0].Status" --output text); MSG=$(aws ec2 describe-import-image-tasks --import-task-ids "$IMPORT_TASK_ID" --query "ImportImageTasks[0].StatusMessage" --output text 2>/dev/null || echo ""); echo "[post_build] ${STATUS} (${MSG}) [${i}/60]"; [ "$STATUS" = "completed" ] && break; [ "$STATUS" = "deleted" ] || [ "$STATUS" = "error" ] && exit 1; sleep 30; done; [ "$STATUS" != "completed" ] && echo "ERROR timeout" && exit 1'
-      - AMI_ID=$(aws ec2 describe-import-image-tasks --import-task-ids "$IMPORT_TASK_ID" --query 'ImportImageTasks[0].ImageId' --output text)
-      - echo "[post_build] AMI ${AMI_ID}"
-      - aws ec2 create-tags --resources "$AMI_ID" --tags Key=Name,Value="${AMI_NAME}" Key=project,Value=akeyless-dev Key=managed_by,Value=pangea Key=source_repo,Value=pleme-io/kindling-profiles Key=build_id,Value="${CODEBUILD_BUILD_ID}"
-      - aws ssm put-parameter --name "${SSM_PARAMETER_NAME}" --value "${AMI_ID}" --type String --overwrite
-      - aws s3 rm "s3://${ARTIFACTS_BUCKET}/${IMAGE_KEY}"
-      - echo "[post_build] Done — AMI ${AMI_ID} registered, SSM updated, S3 cleaned"
-
-artifacts:
-  discard-paths: yes
-  files:
-    - /dev/null
+      - . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+      - >-
+        nix run github:pleme-io/ami-forge --no-write-lock-file --
+        build
+        --image result/
+        --bucket "${ARTIFACTS_BUCKET}"
+        --ami-name "${AMI_NAME}"
+        --ssm "${SSM_PARAMETER_NAME}"
+        --role-name "${VMIMPORT_ROLE_NAME}"
