@@ -40,6 +40,7 @@
       format = "amazon";
       modules = [
         self.nixosModules.default
+        inputs.sops-nix.nixosModules.sops
         ./profiles/k3s-cloud-server
         {
           # Minimal node identity for AMI build (overridden at boot by kindling)
