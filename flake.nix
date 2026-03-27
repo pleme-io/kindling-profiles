@@ -43,23 +43,23 @@
         inputs.sops-nix.nixosModules.sops
         ./profiles/k3s-cloud-server
         # Force QEMU software emulation (no /dev/kvm needed in CodeBuild)
-        # Override vmTools to inject QEMU_OPTS into the builder derivation
-        ({ pkgs, ... }: {
+        # Wrap qemu_kvm binary to prepend -accel tcg, keeping hostCpuOnly (small binary)
+        ({ pkgs, lib, ... }: {
           nixpkgs.overlays = [
             (final: prev: {
-              vmTools = prev.vmTools.override {
-                # Inject "-accel tcg" via QEMU_OPTS in the vm run script
-                rootModules = prev.vmTools.rootModules or [
-                  "virtio_pci" "virtio_mmio" "virtio_blk" "virtio_balloon"
-                  "virtio_rng" "ext4" "unix" "9p" "9pnet_virtio" "crc32c_generic"
-                  "virtiofs"
-                ];
-              } // {
-                # Wrap runInLinuxVM to always set QEMU_OPTS
-                runInLinuxVM = drv: prev.vmTools.runInLinuxVM (drv.overrideAttrs (old: {
-                  QEMU_OPTS = "-accel tcg";
-                }));
-              };
+              qemu_kvm = prev.runCommand "qemu-tcg" { nativeBuildInputs = [ prev.makeWrapper ]; } ''
+                mkdir -p $out/bin
+                for f in ${prev.qemu_kvm}/bin/*; do
+                  name=$(basename "$f")
+                  if [[ "$name" == qemu-system-* ]]; then
+                    makeWrapper "$f" "$out/bin/$name" --add-flags "-accel tcg"
+                  else
+                    ln -s "$f" "$out/bin/$name"
+                  fi
+                done
+                # Copy share directory for firmware/bios files
+                ln -s ${prev.qemu_kvm}/share $out/share
+              '';
             })
           ];
         })
