@@ -23,10 +23,6 @@
       url = "github:cachix/devenv";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    ami-forge = {
-      url = "github:pleme-io/ami-forge";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
   outputs = {
@@ -34,7 +30,35 @@
     nixpkgs,
     ...
   } @ inputs: let
-    # AMI builder via nixos-generators — produces Amazon-format images
+    # Minimal node identity shared by both mkAmi and nixosConfigurations.ami-builder
+    amiNodeIdentity = system: {
+      kindling.nodeIdentity = {
+        profile = "k3s-cloud-server";
+        hostname = "ami-builder";
+        user = { name = "root"; uid = 0; };
+        secrets.provider = "sops";
+        hardware = {
+          platform = system;
+          cpu.vendor = if system == "x86_64-linux" then "amd" else "arm";
+          kernel.modules = [];
+          kernel.params = [];
+        };
+        network.firewall = {
+          allowed_tcp_ports = [];
+          allowed_udp_ports = [];
+        };
+        network.vpn_links = [];
+        kubernetes = {
+          role = "server";
+          cluster_cidr = null;
+          service_cidr = null;
+        };
+        nix.trusted_users = ["root"];
+        nix.attic.token_file = null;
+      };
+    };
+
+    # AMI builder via nixos-generators — produces Amazon-format images (for local testing)
     mkAmi = system: inputs.nixos-generators.nixosGenerate {
       inherit system;
       format = "amazon";
@@ -42,39 +66,7 @@
         self.nixosModules.default
         inputs.sops-nix.nixosModules.sops
         ./profiles/k3s-cloud-server
-        # Increase disk image size — default is too small for the NixOS closure
-        # with k3s + blackmatter modules (~5GB). Also force diskSize to avoid
-        # "No space left on device" during install-to-disk phase.
-        {
-          virtualisation.diskSize = 8192; # 8GB
-        }
-        {
-          # Minimal node identity for AMI build (overridden at boot by kindling)
-          kindling.nodeIdentity = {
-            profile = "k3s-cloud-server";
-            hostname = "ami-builder";
-            user = { name = "root"; uid = 0; };
-            secrets.provider = "sops";
-            hardware = {
-              platform = system;
-              cpu.vendor = if system == "x86_64-linux" then "amd" else "arm";
-              kernel.modules = [];
-              kernel.params = [];
-            };
-            network.firewall = {
-              allowed_tcp_ports = [];
-              allowed_udp_ports = [];
-            };
-            network.vpn_links = [];
-            kubernetes = {
-              role = "server";
-              cluster_cidr = null;
-              service_cidr = null;
-            };
-            nix.trusted_users = ["root"];
-            nix.attic.token_file = null;
-          };
-        }
+        (amiNodeIdentity system)
       ];
     };
   in {
@@ -83,91 +75,121 @@
     nixosModules.default = {imports = [./modules/node-identity.nix inputs.blackmatter.nixosModules.blackmatter];};
     homeManagerModules.default = {imports = [./modules/node-identity.nix];};
 
-    # AMI packages — built by CodeBuild for EC2 import-image
+    # AMI packages — for local testing with nixos-generators
     packages.x86_64-linux.ami = mkAmi "x86_64-linux";
     packages.aarch64-linux.ami = mkAmi "aarch64-linux";
 
-    # Nix-builder OCI images — used by CI/CD to build AMIs
-    packages.x86_64-linux.nix-builder-image = let
+    # Packer template — Nix-generated JSON for HashiCorp Packer AMI builds
+    packages.x86_64-linux.packer-template = let
       pkgs = import nixpkgs { system = "x86_64-linux"; };
-    in pkgs.dockerTools.buildImage {
-      name = "ghcr.io/pleme-io/nix-builder";
-      tag = "latest";
+      template = {
+        variable = {
+          ami_name = { type = "string"; default = "nixos-k3s-cloud-server"; };
+          region = { type = "string"; default = "us-east-1"; };
+          instance_type = { type = "string"; default = "c7i.4xlarge"; };
+          volume_size = { type = "number"; default = 30; };
+          github_token = { type = "string"; default = ""; sensitive = true; };
+          flake_ref = { type = "string"; default = "github:pleme-io/kindling-profiles#ami-builder"; };
+        };
+        packer = {
+          required_plugins = {
+            amazon = {
+              version = ">= 1.3.0";
+              source = "github.com/hashicorp/amazon";
+            };
+          };
+        };
+        source.amazon-ebs.nixos = {
+          ami_name = "\${var.ami_name}";
+          region = "\${var.region}";
+          instance_type = "\${var.instance_type}";
+          source_ami_filter = {
+            filters = {
+              name = "nixos/25.*";
+              architecture = "x86_64";
+              virtualization-type = "hvm";
+              root-device-type = "ebs";
+            };
+            owners = ["427812963091"];
+            most_recent = true;
+          };
+          ssh_username = "root";
+          ssh_timeout = "10m";
+          # Tuned gp3: 8K IOPS + 500 MB/s throughput (default is 3K/125)
+          # Eliminates disk I/O bottleneck during nix store writes
+          launch_block_device_mappings = [{
+            device_name = "/dev/xvda";
+            volume_size = "\${var.volume_size}";
+            volume_type = "gp3";
+            iops = 8000;
+            throughput = 500;
+            delete_on_termination = true;
+          }];
+          # Replace existing AMI with same name (no manual cleanup needed)
+          force_deregister = true;
+          force_delete_snapshot = true;
+          tags = {
+            Name = "\${var.ami_name}";
+            ManagedBy = "ami-forge";
+            BuildTimestamp = "{{timestamp}}";
+            SourceFlake = "\${var.flake_ref}";
+          };
+          run_tags = {
+            Name = "ami-forge-packer-builder";
+            ManagedBy = "ami-forge";
+          };
+        };
+        build = {
+          sources = ["source.amazon-ebs.nixos"];
+          provisioner = [{
+            type = "shell";
+            inline = [
+              "set -euo pipefail"
 
-      copyToRoot = pkgs.buildEnv {
-        name = "nix-builder-root";
-        paths = [
-          pkgs.nix
-          pkgs.awscli2
-          inputs.ami-forge.packages.x86_64-linux.default
-          pkgs.git
-          pkgs.coreutils
-          pkgs.bash
-          pkgs.cacert
-        ];
-        pathsToLink = [ "/bin" "/etc" "/share" ];
+              # Configure nix for speed + private repos
+              "echo '=== configuring nix ==='"
+              "grep -q 'experimental-features' /etc/nix/nix.conf 2>/dev/null || echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf"
+              "echo 'max-substitution-jobs = 64' >> /etc/nix/nix.conf"
+              "echo 'narinfo-cache-negative-ttl = 0' >> /etc/nix/nix.conf"
+              "if [ -n \"$GITHUB_TOKEN\" ]; then mkdir -p /root/.config/nix && echo \"access-tokens = github.com=$GITHUB_TOKEN\" >> /root/.config/nix/nix.conf; fi"
+              "systemctl restart nix-daemon && sleep 2"
+
+              # Apply the NixOS configuration
+              "echo '=== applying NixOS configuration ==='"
+              "nixos-rebuild switch --flake $FLAKE_REF"
+
+              # Minimize AMI size
+              "echo '=== cleanup ==='"
+              "nix-collect-garbage -d"
+              "rm -f /root/.config/nix/nix.conf"
+              "journalctl --rotate --vacuum-time=1s 2>/dev/null || true"
+              "rm -rf /tmp/* /var/tmp/* /var/log/journal/* 2>/dev/null || true"
+              "fstrim / 2>/dev/null || true"
+              "echo '=== complete ==='"
+            ];
+            environment_vars = [
+              "GITHUB_TOKEN=\${var.github_token}"
+              "FLAKE_REF=\${var.flake_ref}"
+            ];
+          }];
+          post-processor = [{
+            type = "manifest";
+            output = "packer-manifest.json";
+            strip_path = true;
+          }];
+        };
       };
+    in pkgs.writeText "packer-template.pkr.json" (builtins.toJSON template);
 
-      config = {
-        Env = [
-          "NIX_CONFIG=experimental-features = nix-command flakes"
-          "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
-          "PATH=/bin"
-        ];
-        Cmd = [ "/bin/bash" ];
-      };
-    };
-
-    packages.aarch64-linux.nix-builder-image = let
-      pkgs = import nixpkgs { system = "aarch64-linux"; };
-    in pkgs.dockerTools.buildImage {
-      name = "ghcr.io/pleme-io/nix-builder";
-      tag = "latest";
-
-      copyToRoot = pkgs.buildEnv {
-        name = "nix-builder-root";
-        paths = [
-          pkgs.nix
-          pkgs.awscli2
-          inputs.ami-forge.packages.aarch64-linux.default
-          pkgs.git
-          pkgs.coreutils
-          pkgs.bash
-          pkgs.cacert
-        ];
-        pathsToLink = [ "/bin" "/etc" "/share" ];
-      };
-
-      config = {
-        Env = [
-          "NIX_CONFIG=experimental-features = nix-command flakes"
-          "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
-          "PATH=/bin"
-        ];
-        Cmd = [ "/bin/bash" ];
-      };
-    };
-
-    # AMI build app — used by CodeBuild buildspec (`nix run .#build-ami`)
-    # ami-forge is a flake input derivation, not fetched at runtime.
-    apps.x86_64-linux.build-ami = let
-      pkgs = import nixpkgs { system = "x86_64-linux"; };
-      amiForge = inputs.ami-forge.packages.x86_64-linux.default;
-    in {
-      type = "app";
-      program = toString (pkgs.writeShellScript "build-ami" ''
-        set -euo pipefail
-        echo "[build-ami] Building NixOS AMI image..."
-        nix build .#packages.x86_64-linux.ami --out-link result --no-write-lock-file
-
-        echo "[build-ami] Running ami-forge pipeline..."
-        ${amiForge}/bin/ami-forge build \
-          --image result/ \
-          --bucket "''${ARTIFACTS_BUCKET}" \
-          --ami-name "''${AMI_NAME}" \
-          --ssm "''${SSM_PARAMETER_NAME}" \
-          --role-name "''${VMIMPORT_ROLE_NAME}"
-      '');
+    # NixOS configuration for Packer-based AMI builds (nixos-rebuild switch target)
+    nixosConfigurations.ami-builder = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        self.nixosModules.default
+        inputs.sops-nix.nixosModules.sops
+        ./profiles/k3s-cloud-server
+        (amiNodeIdentity "x86_64-linux")
+      ];
     };
 
     # Profile library — used by kindling's generated flake
