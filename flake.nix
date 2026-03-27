@@ -80,8 +80,9 @@
     packages.aarch64-linux.ami = mkAmi "aarch64-linux";
 
     # Packer template — Nix-generated JSON for HashiCorp Packer AMI builds
-    packages.x86_64-linux.packer-template = let
-      pkgs = import nixpkgs { system = "x86_64-linux"; };
+    # Available on all systems (it's just a JSON text file)
+    packages.aarch64-darwin.packer-template = let
+      pkgs = import nixpkgs { system = "aarch64-darwin"; };
       template = {
         variable = {
           ami_name = { type = "string"; default = "nixos-k3s-cloud-server"; };
