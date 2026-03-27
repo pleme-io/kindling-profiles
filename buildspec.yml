@@ -14,6 +14,7 @@ phases:
       - mkdir -p ~/.config/nix /etc/nix
       - echo "access-tokens = github.com=${GITHUB_TOKEN}" >> ~/.config/nix/nix.conf
       - echo "system-features = kvm big-parallel benchmark nixos-test" >> /etc/nix/nix.conf
+      - echo "sandbox = false" >> /etc/nix/nix.conf
       - nix-daemon &
       - sleep 2
 

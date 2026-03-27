@@ -38,6 +38,18 @@
     mkAmi = system: inputs.nixos-generators.nixosGenerate {
       inherit system;
       format = "amazon";
+      # Override nixpkgs to use software QEMU (no KVM) for disk image builds.
+      # CodeBuild doesn't have /dev/kvm. Software emulation adds ~5 min.
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [
+          (final: prev: {
+            # Replace qemu_kvm (hostCpuOnly, tries KVM) with full qemu
+            # which falls back to TCG software emulation when /dev/kvm missing
+            qemu_kvm = prev.qemu;
+          })
+        ];
+      };
       modules = [
         self.nixosModules.default
         inputs.sops-nix.nixosModules.sops
