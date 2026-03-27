@@ -155,7 +155,7 @@
         set -euo pipefail
         export QEMU_OPTS="''${QEMU_OPTS:--accel tcg}"
         echo "[build-ami] Building NixOS AMI image..."
-        nix build .#packages.x86_64-linux.ami --out-link result --no-write-lock-file --option sandbox false
+        nix build .#packages.x86_64-linux.ami --out-link result --no-write-lock-file --option sandbox false --impure
 
         echo "[build-ami] Running ami-forge pipeline..."
         ${amiForge}/bin/ami-forge build \
