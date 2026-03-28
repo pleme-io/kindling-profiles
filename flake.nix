@@ -31,6 +31,10 @@
       url = "github:nix-community/home-manager/release-25.05";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    ami-forge = {
+      url = "github:pleme-io/ami-forge";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = {
@@ -214,6 +218,94 @@
     checks.x86_64-linux.vpn-test = import ./checks/vpn-test.nix {
       pkgs = import nixpkgs { system = "x86_64-linux"; };
       lib = nixpkgs.lib;
+    };
+
+    # ── nix run apps — orchestrate AMI build + test pipeline ──
+    # All apps run from aarch64-darwin (developer machine) and target x86_64 AMIs.
+    apps.aarch64-darwin = let
+      pkgs = import nixpkgs { system = "aarch64-darwin"; };
+      forgePackage = inputs.ami-forge.packages.aarch64-darwin.default;
+      template = self.packages.aarch64-darwin.packer-template;
+
+      # Shared config
+      ssmParam = "/pangea/akeyless-dev/nixos-ami-id";
+      region = "us-east-1";
+
+      mkApp = name: script: {
+        type = "app";
+        program = toString (pkgs.writeShellScript name ''
+          set -euo pipefail
+          export PATH="${pkgs.lib.makeBinPath [ forgePackage pkgs.packer pkgs.awscli2 ]}:$PATH"
+          TEMPLATE="${template}"
+          SSM="${ssmParam}"
+          REGION="${region}"
+          GITHUB_TOKEN="''${GITHUB_TOKEN:-}"
+          ${script}
+        '');
+      };
+    in {
+      # Build AMI via Packer (no integration tests)
+      ami-build = mkApp "ami-build" ''
+        echo "=== Building AMI via Packer ==="
+        ami-forge packer \
+          --template "$TEMPLATE" \
+          --ssm "$SSM" \
+          --region "$REGION" \
+          --var "github_token=$GITHUB_TOKEN"
+      '';
+
+      # Build AMI + run boot test before promoting
+      ami-build-tested = mkApp "ami-build-tested" ''
+        echo "=== Building AMI with boot test gate ==="
+        ami-forge packer \
+          --template "$TEMPLATE" \
+          --ssm "$SSM" \
+          --region "$REGION" \
+          --var "github_token=$GITHUB_TOKEN" \
+          --boot-test
+      '';
+
+      # Build AMI + run VPN connectivity test before promoting
+      ami-build-vpn-tested = mkApp "ami-build-vpn-tested" ''
+        echo "=== Building AMI with VPN test gate ==="
+        ami-forge packer \
+          --template "$TEMPLATE" \
+          --ssm "$SSM" \
+          --region "$REGION" \
+          --var "github_token=$GITHUB_TOKEN" \
+          --vpn-test
+      '';
+
+      # Build AMI + run ALL tests before promoting
+      ami-build-full = mkApp "ami-build-full" ''
+        echo "=== Building AMI with full test suite ==="
+        ami-forge packer \
+          --template "$TEMPLATE" \
+          --ssm "$SSM" \
+          --region "$REGION" \
+          --var "github_token=$GITHUB_TOKEN" \
+          --boot-test \
+          --vpn-test
+      '';
+
+      # Boot-test an existing AMI by ID
+      ami-boot-test = mkApp "ami-boot-test" ''
+        AMI_ID="''${1:-$(aws ssm get-parameter --name "$SSM" --region "$REGION" --query 'Parameter.Value' --output text)}"
+        echo "=== Boot testing AMI: $AMI_ID ==="
+        ami-forge boot-test --ami-id "$AMI_ID" --region "$REGION"
+      '';
+
+      # VPN-test an existing AMI by ID
+      ami-vpn-test = mkApp "ami-vpn-test" ''
+        AMI_ID="''${1:-$(aws ssm get-parameter --name "$SSM" --region "$REGION" --query 'Parameter.Value' --output text)}"
+        echo "=== VPN testing AMI: $AMI_ID ==="
+        ami-forge vpn-test --ami-id "$AMI_ID" --region "$REGION"
+      '';
+
+      # Show current AMI status
+      ami-status = mkApp "ami-status" ''
+        ami-forge status --ssm "$SSM" --region "$REGION"
+      '';
     };
 
     # Profile library — used by kindling's generated flake
