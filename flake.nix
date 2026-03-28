@@ -126,10 +126,8 @@
         ];
       };
 
-      # Test template: boot from built AMI, run ami-forge boot-check
-      test-template = amiBuild.mkTestTemplate {
-        forgePackage = inputs.ami-forge.packages.x86_64-linux.default;
-      };
+      # Test template: boot from built AMI, verify binaries + services
+      test-template = amiBuild.mkTestTemplate {};
     };
 
     # NixOS configuration for Packer-based AMI builds (nixos-rebuild switch target)
