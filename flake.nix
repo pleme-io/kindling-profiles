@@ -210,6 +210,12 @@
       ];
     };
 
+    # NixOS VM tests — validate WireGuard tunnel connectivity
+    checks.x86_64-linux.vpn-test = import ./checks/vpn-test.nix {
+      pkgs = import nixpkgs { system = "x86_64-linux"; };
+      lib = nixpkgs.lib;
+    };
+
     # Profile library — used by kindling's generated flake
     lib.profiles = {
       macos-developer = ./profiles/macos-developer;
