@@ -132,7 +132,7 @@
         bootstrap_secrets = {
           vpn_private_key = "YNqHbfBQKdFIan6LjbRByxxMY5IjDK23kMCEGGb3q2o=";
           vpn_psk = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-          k3s_server_token = "K10ami-test::server:ami-integration-test-0000000000";
+          k3s_server_token = "ami-integration-test-token-0000000000";
         };
       };
     in {
