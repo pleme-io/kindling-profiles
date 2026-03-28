@@ -70,6 +70,34 @@
       };
     };
 
+    # Minimal node identity for Attic server AMI builds
+    atticNodeIdentity = system: {
+      kindling.nodeIdentity = {
+        profile = "attic-server";
+        hostname = "attic-builder";
+        user = { name = "root"; uid = 0; };
+        secrets.provider = "sops";
+        hardware = {
+          platform = system;
+          cpu.vendor = if system == "x86_64-linux" then "amd" else "arm";
+          kernel.modules = [];
+          kernel.params = [];
+        };
+        network.firewall = {
+          allowed_tcp_ports = [];
+          allowed_udp_ports = [];
+        };
+        network.vpn_links = [];
+        kubernetes = {
+          role = null;
+          cluster_cidr = null;
+          service_cidr = null;
+        };
+        nix.trusted_users = ["root"];
+        nix.attic.token_file = null;
+      };
+    };
+
     # AMI builder via nixos-generators — produces Amazon-format images (for local testing)
     mkAmi = system: inputs.nixos-generators.nixosGenerate {
       inherit system;
@@ -157,6 +185,31 @@
         testUserData = testClusterConfig;
         instanceType = "t3.large";
       };
+
+      # ── Attic Server Packer Templates ──────────────────────────
+      # Build template: base NixOS → nixos-rebuild → kindling ami-build → snapshot
+      attic-build-template = amiBuild.mkBuildTemplate {
+        amiName = "nixos-attic-server";
+        flakeRef = "github:pleme-io/kindling-profiles#attic-builder";
+        provisionerScript = [
+          "nixos-rebuild switch --flake $FLAKE_REF --option access-tokens github.com=$GITHUB_TOKEN"
+          "export PATH=/run/current-system/sw/bin:$PATH"
+          "kindling ami-build --flake-ref $FLAKE_REF --skip-rebuild --skip-validation"
+        ];
+      };
+
+      # Test template: boot from built AMI, validate atticd + postgresql.
+      # No userdata needed — Attic doesn't use kindling-init bootstrap.
+      # t3.small: Attic cache server has modest resource requirements.
+      attic-test-template = amiBuild.mkTestTemplate {
+        instanceType = "t3.small";
+        testScript = [
+          "export PATH=/run/current-system/sw/bin:$PATH"
+          "systemctl is-active atticd.service"
+          "systemctl is-active postgresql.service"
+          "curl -sf http://localhost:8080/ || curl -sf http://localhost:8080/_status || true"
+        ];
+      };
     };
 
     # NixOS configuration for Packer-based AMI builds (nixos-rebuild switch target)
@@ -185,6 +238,24 @@
       ];
     };
 
+    # NixOS configuration for Packer-based Attic AMI builds (nixos-rebuild switch target)
+    nixosConfigurations.attic-builder = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        self.nixosModules.default
+        inputs.sops-nix.nixosModules.sops
+        inputs.kindling.nixosModules.default
+        inputs.home-manager.nixosModules.home-manager
+        "${nixpkgs}/nixos/modules/virtualisation/amazon-image.nix"
+        ./profiles/attic-server
+        (atticNodeIdentity "x86_64-linux")
+        {
+          # Make kindling CLI available for ami-build validation
+          environment.systemPackages = [ inputs.kindling.packages.x86_64-linux.default ];
+        }
+      ];
+    };
+
     # NixOS VM tests — validate WireGuard tunnel connectivity
     checks.x86_64-linux.vpn-test = import ./checks/vpn-test.nix {
       pkgs = import nixpkgs { system = "x86_64-linux"; };
@@ -195,13 +266,30 @@
     apps.aarch64-darwin = let
       pkgs = import nixpkgs { system = "aarch64-darwin"; };
       amiBuild = import "${inputs.substrate}/lib/infra/ami-build.nix" { inherit pkgs; };
-    in amiBuild.mkAmiBuildPipeline {
-      forgePackage = inputs.ami-forge.packages.aarch64-darwin.default;
-      buildTemplate = self.packages.aarch64-darwin.build-template;
-      testTemplate = self.packages.aarch64-darwin.test-template;
-      ssmParameter = "/pangea/akeyless-dev/nixos-ami-id";
-      amiName = "nixos-k3s-cloud-server";
-      awsProfile = "akeyless-development";
+
+      # K3s AMI pipeline
+      k3sPipeline = amiBuild.mkAmiBuildPipeline {
+        forgePackage = inputs.ami-forge.packages.aarch64-darwin.default;
+        buildTemplate = self.packages.aarch64-darwin.build-template;
+        testTemplate = self.packages.aarch64-darwin.test-template;
+        ssmParameter = "/pangea/akeyless-dev/nixos-ami-id";
+        amiName = "nixos-k3s-cloud-server";
+        awsProfile = "akeyless-development";
+      };
+
+      # Attic cache server AMI pipeline
+      atticPipeline = amiBuild.mkAmiBuildPipeline {
+        forgePackage = inputs.ami-forge.packages.aarch64-darwin.default;
+        buildTemplate = self.packages.aarch64-darwin.attic-build-template;
+        testTemplate = self.packages.aarch64-darwin.attic-test-template;
+        ssmParameter = "/pangea/attic-cache/nixos-ami-id";
+        amiName = "nixos-attic-server";
+        awsProfile = "akeyless-development";
+      };
+    in k3sPipeline // {
+      attic-ami-build = atticPipeline.ami-build;
+      attic-ami-test = atticPipeline.ami-test;
+      attic-ami-status = atticPipeline.ami-status;
     };
 
     # Profile library — used by kindling's generated flake
@@ -210,6 +298,7 @@
       k3s-server = ./profiles/k3s-server;
       k3s-agent = ./profiles/k3s-agent;
       k3s-cloud-server = ./profiles/k3s-cloud-server;
+      attic-server = ./profiles/attic-server;
     };
 
     # Profile metadata — used by `kindling profile list/show`
@@ -233,6 +322,11 @@
         description = "NixOS K3s server for cloud hosts (Hetzner/AWS) with WireGuard mesh and FluxCD";
         platform = "linux";
         components = ["k3s" "fluxcd" "wireguard" "firewall"];
+      };
+      attic-server = {
+        description = "NixOS Attic binary cache server for storing Nix build artifacts with PostgreSQL and local storage";
+        platform = "linux";
+        components = ["attic-server" "postgresql" "firewall"];
       };
     };
   };
