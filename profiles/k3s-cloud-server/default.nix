@@ -26,7 +26,10 @@ in {
     serviceCIDR = if ni.kubernetes.service_cidr != null then ni.kubernetes.service_cidr else k3sDefaults.defaultServiceCIDR;
     clusterDNS = k3sDefaults.defaultClusterDNS;
     waitForDNS.enable = true;
-    extraFlags = k3sDefaults.allServerFlags k3sDefaults;
+    extraFlags = k3sDefaults.allServerFlags k3sDefaults
+      # Add VPN addresses as tls-san so K3s server cert covers VPN IPs
+      ++ (map (link: "--tls-san=${builtins.head (lib.splitString "/" link.address)}")
+             (builtins.filter (link: link.address or null != null) ni.network.vpn_links));
   };
 
   # ── Kernel ────────────────────────────────────────────────
