@@ -159,6 +159,7 @@
       forgePackage = inputs.ami-forge.packages.aarch64-darwin.default;
       packerTemplate = self.packages.aarch64-darwin.packer-template;
       ssmParameter = "/pangea/akeyless-dev/nixos-ami-id";
+      awsProfile = "akeyless-development";
     };
 
     # Profile library — used by kindling's generated flake
