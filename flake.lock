@@ -26187,11 +26187,11 @@
         "substrate": "substrate_21"
       },
       "locked": {
-        "lastModified": 1774654820,
-        "narHash": "sha256-TNZQ/yleCWcEM1+cWRQjYg93UmkdJTnSIeoStnaTePo=",
+        "lastModified": 1774713504,
+        "narHash": "sha256-RPkDYNPTaF2YZUnYr7fJUtC3QrTlsJaM60483iXo4I4=",
         "owner": "pleme-io",
         "repo": "kindling",
-        "rev": "3bfa2be9a1246b85f60a480de942fcd990afc14a",
+        "rev": "3a83eff5f4b8e18bbb48a2f1908679872c4ef1e4",
         "type": "github"
       },
       "original": {
