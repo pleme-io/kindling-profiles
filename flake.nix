@@ -144,6 +144,8 @@
             enable = true;
             package = inputs.kindling.packages.x86_64-linux.default;
           };
+          # Make kindling CLI available in PATH for ami-test and operator use
+          environment.systemPackages = [ inputs.kindling.packages.x86_64-linux.default ];
         }
       ];
     };
