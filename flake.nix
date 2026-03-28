@@ -285,7 +285,7 @@
         ssmParameter = "/pangea/attic-cache/nixos-ami-id";
         amiName = "nixos-attic-server";
         awsProfile = "akeyless-development";
-        extraPipelineFlags = ["--skip-cluster-test"];
+        skipClusterTest = true;
       };
     in k3sPipeline // {
       attic-ami-build = atticPipeline.ami-build;
