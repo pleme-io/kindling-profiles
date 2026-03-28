@@ -100,10 +100,13 @@
       build-template = amiBuild.mkBuildTemplate {
         amiName = "nixos-k3s-cloud-server";
         flakeRef = "github:pleme-io/kindling-profiles#ami-builder";
-        # All build logic in Rust — shell only sets PATH and calls kindling
+        # Step 1: nixos-rebuild installs kindling + all packages into the system
+        # Step 2: kindling ami-build --skip-rebuild does post-rebuild work (all Rust):
+        #         clean K3s state → validate (11 checks) → cleanup
         provisionerScript = [
+          "nixos-rebuild switch --flake $FLAKE_REF --option access-tokens github.com=$GITHUB_TOKEN"
           "export PATH=/run/current-system/sw/bin:$PATH"
-          "kindling ami-build --flake-ref $FLAKE_REF"
+          "kindling ami-build --flake-ref $FLAKE_REF --skip-rebuild"
         ];
       };
 
