@@ -163,7 +163,21 @@
           k3s_server_token = "ami-integration-test-token-0000000000";
         };
       };
+      # 5-node cluster topology for ami-forge cluster-test validation.
+      # Topology: 1 control-plane (cluster_init), 1 system server, 2 workers, 1 client.
+      clusterTestConfig = amiBuild.mkClusterTestConfig {
+        nodes = [
+          { name = "cp"; role = "server"; cluster_init = true; vpn_address = "10.99.0.1/24"; node_index = 0; }
+          { name = "system"; role = "server"; vpn_address = "10.99.0.2/24"; node_index = 1; }
+          { name = "worker1"; role = "agent"; vpn_address = "10.99.0.3/24"; node_index = 2; }
+          { name = "worker2"; role = "agent"; vpn_address = "10.99.0.4/24"; node_index = 3; }
+          { name = "client"; role = "agent"; vpn_address = "10.99.0.5/24"; node_index = 4; }
+        ];
+      };
     in {
+      # Cluster test config — 5-node topology for ami-forge cluster-test
+      cluster-test-config = clusterTestConfig;
+
       # Build template: base NixOS → nixos-rebuild → kindling ami-test → snapshot
       build-template = amiBuild.mkBuildTemplate {
         amiName = "nixos-k3s-cloud-server";
@@ -267,7 +281,7 @@
       pkgs = import nixpkgs { system = "aarch64-darwin"; };
       amiBuild = import "${inputs.substrate}/lib/infra/ami-build.nix" { inherit pkgs; };
 
-      # K3s AMI pipeline
+      # K3s AMI pipeline (with 5-node cluster test)
       k3sPipeline = amiBuild.mkAmiBuildPipeline {
         forgePackage = inputs.ami-forge.packages.aarch64-darwin.default;
         buildTemplate = self.packages.aarch64-darwin.build-template;
@@ -275,6 +289,7 @@
         ssmParameter = "/pangea/akeyless-dev/nixos-ami-id";
         amiName = "nixos-k3s-cloud-server";
         awsProfile = "akeyless-development";
+        clusterTestConfig = self.packages.aarch64-darwin.cluster-test-config;
       };
 
       # Attic cache server AMI pipeline (no K3s, no cluster test)
