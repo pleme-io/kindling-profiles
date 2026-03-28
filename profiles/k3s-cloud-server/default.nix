@@ -137,7 +137,8 @@ in {
   # ── Packages ────────────────────────────────────────────────
   nixpkgs.config.allowUnfree = true;
   environment.systemPackages = with pkgs; [
-    kubectl k9s fluxcd
+    k3s kubectl k9s fluxcd
+    wireguard-tools
     htop nvme-cli ethtool iotop
     smartmontools lsof tcpdump
   ];
