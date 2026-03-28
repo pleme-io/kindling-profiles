@@ -109,6 +109,7 @@
         "systemctl restart nix-daemon && sleep 2"
         "echo '=== applying NixOS configuration ==='"
         "nixos-rebuild switch --flake $FLAKE_REF"
+        "export PATH=/run/current-system/sw/bin:$PATH"
         "echo '=== running AMI validation ==='"
         "kindling ami-test"
         "echo '=== cleanup ==='"
