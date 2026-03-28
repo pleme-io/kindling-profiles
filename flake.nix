@@ -100,36 +100,10 @@
       build-template = amiBuild.mkBuildTemplate {
         amiName = "nixos-k3s-cloud-server";
         flakeRef = "github:pleme-io/kindling-profiles#ami-builder";
+        # All build logic in Rust — shell only sets PATH and calls kindling
         provisionerScript = [
-          "set -euo pipefail"
-          "echo '=== configuring nix ==='"
-          # NixOS /etc/nix/nix.conf is read-only (nix store). Write user config for CLI tools.
-          "mkdir -p /root/.config/nix"
-          "echo 'experimental-features = nix-command flakes' >> /root/.config/nix/nix.conf"
-          "echo 'max-substitution-jobs = 64' >> /root/.config/nix/nix.conf"
-          "echo 'narinfo-cache-negative-ttl = 0' >> /root/.config/nix/nix.conf"
-          "if [ -n \"$GITHUB_TOKEN\" ]; then echo \"access-tokens = github.com=$GITHUB_TOKEN\" >> /root/.config/nix/nix.conf; fi"
-          # Restart daemon so it picks up trusted-users, then use --option for access-tokens
-          "systemctl restart nix-daemon && sleep 2"
-          "echo '=== applying NixOS configuration ==='"
-          "if [ -n \"$GITHUB_TOKEN\" ]; then NIXOS_REBUILD_OPTS=\"--option access-tokens github.com=$GITHUB_TOKEN\"; else NIXOS_REBUILD_OPTS=\"\"; fi"
-          "nixos-rebuild switch --flake $FLAKE_REF $NIXOS_REBUILD_OPTS"
-          "echo"
           "export PATH=/run/current-system/sw/bin:$PATH"
-          "hash -r"
-          "echo '=== cleaning K3s state for deterministic PKI seeding ==='"
-          "systemctl stop k3s.service 2>/dev/null || true"
-          "rm -rf /var/lib/rancher/k3s/server"
-          "echo '=== running AMI validation (11 checks) ==='"
-          "/run/current-system/sw/bin/kindling ami-test"
-          "echo '=== cleanup ==='"
-          "nix-collect-garbage -d"
-          "rm -f /root/.config/nix/nix.conf"
-          "rm -f /root/.ssh/authorized_keys"
-          "journalctl --rotate --vacuum-time=1s 2>/dev/null || true"
-          "rm -rf /tmp/* /var/tmp/* /var/log/journal/* 2>/dev/null || true"
-          "fstrim / 2>/dev/null || true"
-          "echo '=== complete ==='"
+          "kindling ami-build --flake-ref $FLAKE_REF"
         ];
       };
 
