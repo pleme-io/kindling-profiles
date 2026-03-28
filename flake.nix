@@ -91,37 +91,45 @@
     packages.x86_64-linux.ami = mkAmi "x86_64-linux";
     packages.aarch64-linux.ami = mkAmi "aarch64-linux";
 
-    # Packer template — generated via substrate mkPackerTemplate
-    packages.aarch64-darwin.packer-template = let
+    # Packer templates — generated via substrate ami-build.nix
+    packages.aarch64-darwin = let
       pkgs = import nixpkgs { system = "aarch64-darwin"; };
       amiBuild = import "${inputs.substrate}/lib/infra/ami-build.nix" { inherit pkgs; };
-    in amiBuild.mkPackerTemplate {
-      amiName = "nixos-k3s-cloud-server";
-      flakeRef = "github:pleme-io/kindling-profiles#ami-builder";
-      provisionerScript = [
-        "set -euo pipefail"
-        "echo '=== configuring nix ==='"
-        "mkdir -p /root/.config/nix"
-        "echo 'experimental-features = nix-command flakes' >> /root/.config/nix/nix.conf"
-        "echo 'max-substitution-jobs = 64' >> /root/.config/nix/nix.conf"
-        "echo 'narinfo-cache-negative-ttl = 0' >> /root/.config/nix/nix.conf"
-        "if [ -n \"$GITHUB_TOKEN\" ]; then echo \"access-tokens = github.com=$GITHUB_TOKEN\" >> /root/.config/nix/nix.conf; fi"
-        "systemctl restart nix-daemon && sleep 2"
-        "echo '=== applying NixOS configuration ==='"
-        "nixos-rebuild switch --flake $FLAKE_REF"
-        "echo"
-        "export PATH=/run/current-system/sw/bin:$PATH"
-        "hash -r"
-        "echo '=== running AMI validation ==='"
-        "/run/current-system/sw/bin/kindling ami-test"
-        "echo '=== cleanup ==='"
-        "nix-collect-garbage -d"
-        "rm -f /root/.config/nix/nix.conf"
-        "journalctl --rotate --vacuum-time=1s 2>/dev/null || true"
-        "rm -rf /tmp/* /var/tmp/* /var/log/journal/* 2>/dev/null || true"
-        "fstrim / 2>/dev/null || true"
-        "echo '=== complete ==='"
-      ];
+    in {
+      # Build template: base NixOS → nixos-rebuild → kindling ami-test → snapshot
+      build-template = amiBuild.mkBuildTemplate {
+        amiName = "nixos-k3s-cloud-server";
+        flakeRef = "github:pleme-io/kindling-profiles#ami-builder";
+        provisionerScript = [
+          "set -euo pipefail"
+          "echo '=== configuring nix ==='"
+          "mkdir -p /root/.config/nix"
+          "echo 'experimental-features = nix-command flakes' >> /root/.config/nix/nix.conf"
+          "echo 'max-substitution-jobs = 64' >> /root/.config/nix/nix.conf"
+          "echo 'narinfo-cache-negative-ttl = 0' >> /root/.config/nix/nix.conf"
+          "if [ -n \"$GITHUB_TOKEN\" ]; then echo \"access-tokens = github.com=$GITHUB_TOKEN\" >> /root/.config/nix/nix.conf; fi"
+          "systemctl restart nix-daemon && sleep 2"
+          "echo '=== applying NixOS configuration ==='"
+          "nixos-rebuild switch --flake $FLAKE_REF"
+          "echo"
+          "export PATH=/run/current-system/sw/bin:$PATH"
+          "hash -r"
+          "echo '=== running AMI validation ==='"
+          "/run/current-system/sw/bin/kindling ami-test"
+          "echo '=== cleanup ==='"
+          "nix-collect-garbage -d"
+          "rm -f /root/.config/nix/nix.conf"
+          "journalctl --rotate --vacuum-time=1s 2>/dev/null || true"
+          "rm -rf /tmp/* /var/tmp/* /var/log/journal/* 2>/dev/null || true"
+          "fstrim / 2>/dev/null || true"
+          "echo '=== complete ==='"
+        ];
+      };
+
+      # Test template: boot from built AMI, run ami-forge boot-check
+      test-template = amiBuild.mkTestTemplate {
+        forgePackage = inputs.ami-forge.packages.x86_64-linux.default;
+      };
     };
 
     # NixOS configuration for Packer-based AMI builds (nixos-rebuild switch target)
@@ -156,14 +164,16 @@
       lib = nixpkgs.lib;
     };
 
-    # AMI pipeline apps — generated via substrate mkAmiBuildApps
+    # AMI pipeline apps — Packer orchestrates, ami-forge is a tool
     apps.aarch64-darwin = let
       pkgs = import nixpkgs { system = "aarch64-darwin"; };
       amiBuild = import "${inputs.substrate}/lib/infra/ami-build.nix" { inherit pkgs; };
-    in amiBuild.mkAmiBuildApps {
+    in amiBuild.mkAmiBuildPipeline {
       forgePackage = inputs.ami-forge.packages.aarch64-darwin.default;
-      packerTemplate = self.packages.aarch64-darwin.packer-template;
+      buildTemplate = self.packages.aarch64-darwin.build-template;
+      testTemplate = self.packages.aarch64-darwin.test-template;
       ssmParameter = "/pangea/akeyless-dev/nixos-ami-id";
+      amiName = "nixos-k3s-cloud-server";
       awsProfile = "akeyless-development";
     };
 
