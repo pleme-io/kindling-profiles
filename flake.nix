@@ -119,6 +119,7 @@
           "echo '=== cleanup ==='"
           "nix-collect-garbage -d"
           "rm -f /root/.config/nix/nix.conf"
+          "rm -f /root/.ssh/authorized_keys"
           "journalctl --rotate --vacuum-time=1s 2>/dev/null || true"
           "rm -rf /tmp/* /var/tmp/* /var/log/journal/* 2>/dev/null || true"
           "fstrim / 2>/dev/null || true"
