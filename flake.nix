@@ -95,6 +95,46 @@
     packages.aarch64-darwin = let
       pkgs = import nixpkgs { system = "aarch64-darwin"; };
       amiBuild = import "${inputs.substrate}/lib/infra/ami-build.nix" { inherit pkgs; };
+
+      # Test cluster config for AMI integration testing.
+      # Injected as EC2 userdata → kindling-init bootstraps VPN + K3s on the test instance.
+      # Hardcoded WireGuard keys are ephemeral (test instance destroyed after validation).
+      testClusterConfig = builtins.toJSON {
+        cluster_name = "ami-integration-test";
+        role = "server";
+        distribution = "k3s";
+        distribution_track = "1.34";
+        profile = "cloud-server";
+        node_index = 0;
+        cluster_init = true;
+        skip_nix_rebuild = true;
+        vpn = {
+          require_liveness = false;
+          links = [{
+            name = "wg-test";
+            address = "10.99.0.1/24";
+            private_key_file = "/run/secrets.d/vpn-private-key";
+            listen_port = 51820;
+            profile = "k8s-control-plane";
+            peers = [{
+              public_key = "dCfQx6dLR/xFT5W7sVlEqyZFk0UR+6QRH+3hf0TDAiI=";
+              allowed_ips = ["10.99.0.0/24"];
+              preshared_key_file = "/run/secrets.d/vpn-psk";
+            }];
+            firewall = {
+              trust_interface = false;
+              allowed_tcp_ports = [6443];
+              allowed_udp_ports = [51820];
+              incoming_udp_port = 51820;
+            };
+          }];
+        };
+        bootstrap_secrets = {
+          vpn_private_key = "YNqHbfBQKdFIan6LjbRByxxMY5IjDK23kMCEGGb3q2o=";
+          vpn_psk = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+          k3s_server_token = "K10ami-test::server:ami-integration-test-0000000000";
+        };
+      };
     in {
       # Build template: base NixOS → nixos-rebuild → kindling ami-test → snapshot
       build-template = amiBuild.mkBuildTemplate {
@@ -110,8 +150,13 @@
         ];
       };
 
-      # Test template: boot from built AMI, verify binaries + services
-      test-template = amiBuild.mkTestTemplate {};
+      # Test template: boot from built AMI with test userdata.
+      # kindling-init bootstraps VPN + K3s, then kindling ami-integration-test validates.
+      # t3.large: K3s needs 4GB+ RAM for single-node cluster.
+      test-template = amiBuild.mkTestTemplate {
+        testUserData = testClusterConfig;
+        instanceType = "t3.large";
+      };
     };
 
     # NixOS configuration for Packer-based AMI builds (nixos-rebuild switch target)
