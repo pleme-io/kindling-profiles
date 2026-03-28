@@ -103,12 +103,17 @@
         provisionerScript = [
           "set -euo pipefail"
           "echo '=== configuring nix ==='"
-          # Write to BOTH user and system nix config — daemon reads /etc/nix/nix.conf
-          "mkdir -p /root/.config/nix /etc/nix"
-          "for CONF in /root/.config/nix/nix.conf /etc/nix/nix.conf; do echo 'experimental-features = nix-command flakes' >> $CONF; echo 'max-substitution-jobs = 64' >> $CONF; echo 'narinfo-cache-negative-ttl = 0' >> $CONF; if [ -n \"$GITHUB_TOKEN\" ]; then echo \"access-tokens = github.com=$GITHUB_TOKEN\" >> $CONF; fi; done"
+          # NixOS /etc/nix/nix.conf is read-only (nix store). Write user config for CLI tools.
+          "mkdir -p /root/.config/nix"
+          "echo 'experimental-features = nix-command flakes' >> /root/.config/nix/nix.conf"
+          "echo 'max-substitution-jobs = 64' >> /root/.config/nix/nix.conf"
+          "echo 'narinfo-cache-negative-ttl = 0' >> /root/.config/nix/nix.conf"
+          "if [ -n \"$GITHUB_TOKEN\" ]; then echo \"access-tokens = github.com=$GITHUB_TOKEN\" >> /root/.config/nix/nix.conf; fi"
+          # Restart daemon so it picks up trusted-users, then use --option for access-tokens
           "systemctl restart nix-daemon && sleep 2"
           "echo '=== applying NixOS configuration ==='"
-          "nixos-rebuild switch --flake $FLAKE_REF"
+          "if [ -n \"$GITHUB_TOKEN\" ]; then NIXOS_REBUILD_OPTS=\"--option access-tokens github.com=$GITHUB_TOKEN\"; else NIXOS_REBUILD_OPTS=\"\"; fi"
+          "nixos-rebuild switch --flake $FLAKE_REF $NIXOS_REBUILD_OPTS"
           "echo"
           "export PATH=/run/current-system/sw/bin:$PATH"
           "hash -r"
@@ -116,7 +121,7 @@
           "/run/current-system/sw/bin/kindling ami-test"
           "echo '=== cleanup ==='"
           "nix-collect-garbage -d"
-          "rm -f /root/.config/nix/nix.conf /etc/nix/nix.conf"
+          "rm -f /root/.config/nix/nix.conf"
           "rm -f /root/.ssh/authorized_keys"
           "journalctl --rotate --vacuum-time=1s 2>/dev/null || true"
           "rm -rf /tmp/* /var/tmp/* /var/log/journal/* 2>/dev/null || true"
