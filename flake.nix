@@ -277,7 +277,7 @@
         awsProfile = "akeyless-development";
       };
 
-      # Attic cache server AMI pipeline
+      # Attic cache server AMI pipeline (no K3s, no cluster test)
       atticPipeline = amiBuild.mkAmiBuildPipeline {
         forgePackage = inputs.ami-forge.packages.aarch64-darwin.default;
         buildTemplate = self.packages.aarch64-darwin.attic-build-template;
@@ -285,6 +285,7 @@
         ssmParameter = "/pangea/attic-cache/nixos-ami-id";
         amiName = "nixos-attic-server";
         awsProfile = "akeyless-development";
+        extraPipelineFlags = ["--skip-cluster-test"];
       };
     in k3sPipeline // {
       attic-ami-build = atticPipeline.ami-build;
