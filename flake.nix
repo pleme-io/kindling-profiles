@@ -166,7 +166,8 @@
       # 5-node cluster topology for ami-forge cluster-test validation.
       # Topology: 1 control-plane (cluster_init), 1 system server, 2 workers, 1 client.
       clusterTestConfig = amiBuild.mkClusterTestConfig {
-        instanceType = "t3.large";  # t3 family avoids c7i vCPU limits
+        instanceType = "t3.large";
+        timeout = 900;  # 15 min: CP K3s init ~7min + agent join ~3min + buffer
         nodes = [
           { name = "cp"; role = "server"; cluster_init = true; vpn_address = "10.99.0.1/24"; node_index = 0; }
           { name = "system"; role = "server"; vpn_address = "10.99.0.2/24"; node_index = 1; }
