@@ -190,6 +190,8 @@
         # Step 2: kindling ami-build --skip-rebuild does post-rebuild work (all Rust):
         #         clean K3s state → validate (11 checks) → cleanup
         provisionerScript = [
+          ''test -z "$ATTIC_URL" || echo "extra-substituters = $ATTIC_URL" >> /etc/nix/nix.conf''
+          ''test -z "$ATTIC_URL" || echo "require-sigs = false" >> /etc/nix/nix.conf''
           "nixos-rebuild switch --flake $FLAKE_REF --option access-tokens github.com=$GITHUB_TOKEN"
           "export PATH=/run/current-system/sw/bin:$PATH"
           "kindling ami-build --flake-ref $FLAKE_REF --skip-rebuild"
@@ -293,6 +295,8 @@
         amiName = "nixos-k3s-cloud-server";
         awsProfile = "akeyless-development";
         clusterTestConfig = self.packages.aarch64-darwin.cluster-test-config;
+        # Ephemeral Attic cache — boot from last AMI, use as substituter, snapshot after
+        atticSsm = "/pangea/attic-cache/nixos-ami-id";
       };
 
       # Attic cache server AMI pipeline (no K3s, no cluster test)
