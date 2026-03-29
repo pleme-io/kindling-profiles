@@ -185,13 +185,12 @@
       build-template = amiBuild.mkBuildTemplate {
         amiName = "nixos-k3s-cloud-server";
         flakeRef = "github:pleme-io/kindling-profiles#ami-builder";
-        # Step 1: nixos-rebuild installs kindling + all packages into the system
-        # Step 2: kindling ami-build --skip-rebuild does post-rebuild work (all Rust):
-        #         clean K3s state → validate (11 checks) → cleanup
+        # Single command: kindling ami-build handles nixos-rebuild internally
+        # (with GITHUB_TOKEN access-tokens), then cleans K3s state, validates
+        # (11 checks), and runs post-build cleanup — all in Rust.
         provisionerScript = [
-          "nixos-rebuild switch --flake $FLAKE_REF --option access-tokens github.com=$GITHUB_TOKEN"
           "export PATH=/run/current-system/sw/bin:$PATH"
-          "kindling ami-build --flake-ref $FLAKE_REF --skip-rebuild"
+          "kindling ami-build --flake-ref $FLAKE_REF"
         ];
       };
 
@@ -204,14 +203,13 @@
       };
 
       # ── Attic Server Packer Templates ──────────────────────────
-      # Build template: base NixOS → nixos-rebuild → kindling ami-build → snapshot
+      # Build template: base NixOS → kindling ami-build → snapshot
       attic-build-template = amiBuild.mkBuildTemplate {
         amiName = "nixos-attic-server";
         flakeRef = "github:pleme-io/kindling-profiles#attic-builder";
         provisionerScript = [
-          "nixos-rebuild switch --flake $FLAKE_REF --option access-tokens github.com=$GITHUB_TOKEN"
           "export PATH=/run/current-system/sw/bin:$PATH"
-          "kindling ami-build --flake-ref $FLAKE_REF --skip-rebuild --skip-validation"
+          "kindling ami-build --flake-ref $FLAKE_REF --skip-validation"
         ];
       };
 
