@@ -37,8 +37,9 @@ Phase 1: Packer launches base NixOS EC2 → runs provisioner:
 Phase 2: ami-forge extracts AMI ID from packer-manifest.json
 Phase 3: Packer boots AMI with test userdata → kindling ami-integration-test
            (waits for kindling-init → validates VPN + K3s + kubectl)
-Phase 4: ami-forge cluster-test: launches 2 EC2 instances, cross-referenced
-           WireGuard keys, validates 2-node K3s cluster formation
+Phase 4: ami-forge cluster-test: launches 5 EC2 instances (1 CP + 3 workers
+           + 1 client), validates tag coordination, VPN peering, K3s cluster
+           join, and kubectl from client node
 Phase 5: ami-forge promotes AMI to SSM parameter
 ```
 
@@ -61,6 +62,10 @@ Integration tests inject a `ClusterConfig` JSON as EC2 userdata. Key fields:
 - `bootstrap_secrets` -- Ephemeral WireGuard keys and K3s tokens (test instance
   is destroyed after validation, so hardcoded keys are safe).
 - `vpn.require_liveness: false` -- Don't fail if peer isn't reachable (single-node test).
+
+- `role` -- Determines which sentinel kindling-init writes. CP node gets
+  `role: "server"` (writes `/var/lib/kindling/server-mode`), agent nodes get
+  `role: "agent"` (writes `/var/lib/kindling/agent-mode`).
 
 The test userdata in `flake.nix` (`testClusterConfig`) is the canonical example.
 
@@ -112,6 +117,12 @@ Free to run (local QEMU, no cloud resources).
 5. **Ephemeral Attic cache** (planned) -- boot from last Attic AMI, K3s build
    uses it for Nix store caching, snapshot Attic with new NARs, tear down.
    Zero ongoing cost.
+6. **Dual-sentinel role selection** -- k3s-cloud-server profile sets
+   `roleConditionPath = { server = "/var/lib/kindling/server-mode"; agent = "/var/lib/kindling/agent-mode"; }`.
+   Both k3s.service and k3s-agent.service are in wantedBy=multi-user.target
+   with ConditionPathExists on their respective sentinel. kindling-init
+   writes exactly one sentinel, and systemd deterministically starts the
+   correct service. If neither sentinel exists (AMI build), neither starts.
 
 ---
 
