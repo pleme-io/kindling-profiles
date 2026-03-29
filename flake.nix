@@ -168,6 +168,7 @@
       clusterTestConfig = amiBuild.mkClusterTestConfig {
         instanceType = "t3.xlarge";
         timeout = 1200;
+        instanceProfileName = "ami-forge-test-instance-profile";  # deployed via Pangea IaC
         # 1 CP + 3 agents + 1 client. No second server (etcd HA join is too slow for CI).
         nodes = [
           { name = "cp"; role = "server"; cluster_init = true; vpn_address = "10.99.0.1/24"; node_index = 0; }
