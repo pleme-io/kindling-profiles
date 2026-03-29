@@ -166,13 +166,14 @@
       # 5-node cluster topology for ami-forge cluster-test validation.
       # Topology: 1 control-plane (cluster_init), 1 system server, 2 workers, 1 client.
       clusterTestConfig = amiBuild.mkClusterTestConfig {
-        instanceType = "t3.xlarge";  # 4 vCPU — K3s etcd init needs CPU
-        timeout = 1200;  # 20 min: instance boot + kindling-init + K3s etcd init + agent join
+        instanceType = "t3.xlarge";
+        timeout = 1200;
+        # 1 CP + 3 agents + 1 client. No second server (etcd HA join is too slow for CI).
         nodes = [
           { name = "cp"; role = "server"; cluster_init = true; vpn_address = "10.99.0.1/24"; node_index = 0; }
-          { name = "system"; role = "server"; vpn_address = "10.99.0.2/24"; node_index = 1; }
-          { name = "worker1"; role = "agent"; vpn_address = "10.99.0.3/24"; node_index = 2; }
-          { name = "worker2"; role = "agent"; vpn_address = "10.99.0.4/24"; node_index = 3; }
+          { name = "worker1"; role = "agent"; vpn_address = "10.99.0.2/24"; node_index = 1; }
+          { name = "worker2"; role = "agent"; vpn_address = "10.99.0.3/24"; node_index = 2; }
+          { name = "worker3"; role = "agent"; vpn_address = "10.99.0.4/24"; node_index = 3; }
           { name = "client"; role = "agent"; vpn_address = "10.99.0.5/24"; node_index = 4; }
         ];
       };
