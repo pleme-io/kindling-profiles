@@ -23,7 +23,10 @@ in {
     role = "server";
     configPath = "/etc/rancher/k3s/config.yaml";
     agent.enable = true;
-    roleConditionPath = "/var/lib/kindling/server-mode"; # ConditionPathExists: server if exists, agent if absent
+    roleConditionPath = {
+      server = "/var/lib/kindling/server-mode";
+      agent = "/var/lib/kindling/agent-mode";
+    };
     disable = ["traefik"];
     clusterCIDR = if ni.kubernetes.cluster_cidr != null then ni.kubernetes.cluster_cidr else k3sDefaults.defaultClusterCIDR;
     serviceCIDR = if ni.kubernetes.service_cidr != null then ni.kubernetes.service_cidr else k3sDefaults.defaultServiceCIDR;
