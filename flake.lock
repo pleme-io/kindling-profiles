@@ -11,11 +11,11 @@
         "substrate": "substrate"
       },
       "locked": {
-        "lastModified": 1774817737,
-        "narHash": "sha256-9/ToKBy2GXDmK1/WJbSiRNWWZO0fG9tjaDVnGtr4xUI=",
+        "lastModified": 1774818890,
+        "narHash": "sha256-5smH00y5d20VCGwCb6iKLPRmu9OxMbfk3FtnZCnVitY=",
         "owner": "pleme-io",
         "repo": "ami-forge",
-        "rev": "a6affbee37cab6197218f705cd062d99b1049ee0",
+        "rev": "1c7032b1c6becdaeb60cfa487d8aff24a469ebd8",
         "type": "github"
       },
       "original": {
