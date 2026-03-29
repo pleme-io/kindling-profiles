@@ -22,7 +22,8 @@ in {
     enable = true;
     role = "server";
     configPath = "/etc/rancher/k3s/config.yaml";
-    agent.enable = true; # Install k3s-agent.service (not active by default, available for kindling-init)
+    agent.enable = true;
+    roleConditionPath = "/var/lib/kindling/server-mode"; # ConditionPathExists: server if exists, agent if absent
     disable = ["traefik"];
     clusterCIDR = if ni.kubernetes.cluster_cidr != null then ni.kubernetes.cluster_cidr else k3sDefaults.defaultClusterCIDR;
     serviceCIDR = if ni.kubernetes.service_cidr != null then ni.kubernetes.service_cidr else k3sDefaults.defaultServiceCIDR;
