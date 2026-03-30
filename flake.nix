@@ -284,6 +284,7 @@
         amiName = "nixos-attic-server";
         flakeRef = "github:pleme-io/kindling-profiles#attic-builder";
         provisionerScript = [
+          "nixos-rebuild switch --flake $FLAKE_REF --option access-tokens github.com=$GITHUB_TOKEN"
           "export PATH=/run/current-system/sw/bin:$PATH"
           "kindling ami-build --flake-ref $FLAKE_REF --skip-validation"
         ];
