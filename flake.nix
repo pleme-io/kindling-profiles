@@ -225,6 +225,47 @@
         ];
       };
 
+      # ── Multi-Layer AMI Templates ────────────────────────────
+      # Each layer produces a checkpointed AMI. Failures restart from last good layer.
+
+      # Layer 1: Populate Nix store (expensive, benefits most from Attic cache)
+      layer-1-template = amiBuild.mkLayerTemplate {
+        name = "layer-1-nix-store.pkr.json";
+        amiName = "nixos-k3s-layer-1-nix-store";
+        sourceAmiVariable = false;  # Find base NixOS by filter
+        provisionerScript = [
+          ''mkdir -p /etc/nix && test -z "$GITHUB_TOKEN" || echo "$GITHUB_TOKEN" > /etc/nix/github-access-token''
+          ''if [ -n "$ATTIC_URL" ]; then ATTIC_OPTS="--option extra-substituters $ATTIC_URL --option require-sigs false"; else ATTIC_OPTS=""; fi''
+          ''nix --extra-experimental-features "nix-command flakes" build --print-out-paths "github:pleme-io/kindling-profiles#nixosConfigurations.ami-builder.config.system.build.toplevel" --option access-tokens "github.com=$(cat /etc/nix/github-access-token 2>/dev/null || true)" $ATTIC_OPTS --no-link 2>&1 | tail -5''
+        ];
+        extraTags = { Layer = "1-nix-store"; };
+      };
+
+      # Layer 2: Activate system (instant — everything already in store)
+      layer-2-template = amiBuild.mkLayerTemplate {
+        name = "layer-2-activate.pkr.json";
+        amiName = "nixos-k3s-layer-2-activated";
+        sourceAmiVariable = true;  # Takes Layer 1 AMI
+        provisionerScript = [
+          ''TOPLEVEL=$(ls -d /nix/store/*-nixos-system-ami-builder-* 2>/dev/null | head -1)''
+          ''echo "Activating: $TOPLEVEL"''
+          ''$TOPLEVEL/bin/switch-to-configuration switch''
+        ];
+        extraTags = { Layer = "2-activated"; };
+      };
+
+      # Layer 3: Release preparation (cleanup + 11 validation checks)
+      layer-3-template = amiBuild.mkLayerTemplate {
+        name = "layer-3-release.pkr.json";
+        amiName = "nixos-k3s-cloud-server";
+        sourceAmiVariable = true;  # Takes Layer 2 AMI
+        provisionerScript = [
+          "export PATH=/run/current-system/sw/bin:$PATH"
+          "kindling ami-build --flake-ref github:pleme-io/kindling-profiles#ami-builder --skip-rebuild"
+        ];
+        extraTags = { Layer = "3-release"; };
+      };
+
       # ── Attic Server Packer Templates ──────────────────────────
       # Build template: base NixOS → kindling ami-build → snapshot
       attic-build-template = amiBuild.mkBuildTemplate {
@@ -331,7 +372,42 @@
         awsProfile = "akeyless-development";
         skipClusterTest = true;
       };
+      # Multi-layer K3s AMI pipeline — each layer checkpointed in SSM
+      k3sLayeredPipeline = amiBuild.mkMultiLayerPipeline {
+        forgePackage = inputs.ami-forge.packages.aarch64-darwin.default;
+        layers = [
+          {
+            template = self.packages.aarch64-darwin.layer-1-template;
+            name = "layer-1-nix-store";
+            ssmParameter = "/pangea/ami-layers/k3s-cloud-server/layer-1";
+            fingerprintInputs = [ "${self}/flake.lock" ];
+          }
+          {
+            template = self.packages.aarch64-darwin.layer-2-template;
+            name = "layer-2-activated";
+            ssmParameter = "/pangea/ami-layers/k3s-cloud-server/layer-2";
+          }
+          {
+            template = self.packages.aarch64-darwin.layer-3-template;
+            name = "layer-3-release";
+            ssmParameter = "/pangea/ami-layers/k3s-cloud-server/layer-3";
+          }
+        ];
+        testLayers = [
+          {
+            template = self.packages.aarch64-darwin.test-template;
+            name = "test-basic";
+          }
+        ];
+        promoteSsm = "/pangea/akeyless-dev/nixos-ami-id";
+        amiName = "nixos-k3s-cloud-server";
+        awsProfile = "akeyless-development";
+        atticSsm = "/pangea/attic-cache/nixos-ami-id";
+      };
     in k3sPipeline // {
+      # Multi-layer pipeline (replaces monolithic build when validated)
+      ami-build-layered = k3sLayeredPipeline.ami-build;
+      ami-status-layered = k3sLayeredPipeline.ami-status;
       attic-ami-build = atticPipeline.ami-build;
       attic-ami-test = atticPipeline.ami-test;
       attic-ami-status = atticPipeline.ami-status;
