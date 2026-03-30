@@ -23,13 +23,13 @@ in {
     role = "server";
     configPath = "/etc/rancher/k3s/config.yaml";
     agent.enable = true;
-    # roleConditionPath disabled — kindling-init explicitly starts the correct
-    # service via systemctl start --no-block after writing config.yaml.
-    # Re-enable if systemd-native condition gating is preferred.
-    # roleConditionPath = {
-    #   server = "/var/lib/kindling/server-mode";
-    #   agent = "/var/lib/kindling/agent-mode";
-    # };
+    # Dual-sentinel role selection: systemd ConditionPathExists gates which
+    # K3s service starts. kindling-init writes exactly one sentinel.
+    # Both services in wantedBy=multi-user.target. No race conditions.
+    roleConditionPath = {
+      server = "/var/lib/kindling/server-mode";
+      agent = "/var/lib/kindling/agent-mode";
+    };
     disable = ["traefik"];
     clusterCIDR = if ni.kubernetes.cluster_cidr != null then ni.kubernetes.cluster_cidr else k3sDefaults.defaultClusterCIDR;
     serviceCIDR = if ni.kubernetes.service_cidr != null then ni.kubernetes.service_cidr else k3sDefaults.defaultServiceCIDR;
