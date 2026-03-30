@@ -208,10 +208,7 @@
         # Step 2: kindling ami-build --skip-rebuild does post-rebuild work (all Rust):
         #         clean K3s state → validate (11 checks) → cleanup
         provisionerScript = [
-          "mkdir -p /root/.config/nix"
-          ''test -z "$ATTIC_URL" || echo "extra-substituters = $ATTIC_URL" > /root/.config/nix/nix.conf''
-          ''test -z "$ATTIC_URL" || echo "require-sigs = false" >> /root/.config/nix/nix.conf''
-          "nixos-rebuild switch --flake $FLAKE_REF --option access-tokens github.com=$GITHUB_TOKEN"
+          ''if [ -n "$ATTIC_URL" ]; then echo "Using Attic cache: $ATTIC_URL"; nixos-rebuild switch --flake $FLAKE_REF --option access-tokens github.com=$GITHUB_TOKEN --option extra-substituters "$ATTIC_URL" --option require-sigs false; else nixos-rebuild switch --flake $FLAKE_REF --option access-tokens github.com=$GITHUB_TOKEN; fi''
           "export PATH=/run/current-system/sw/bin:$PATH"
           "kindling ami-build --flake-ref $FLAKE_REF --skip-rebuild"
         ];
