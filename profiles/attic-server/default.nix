@@ -44,6 +44,11 @@ in {
         avg-size = 65536;
         max-size = 262144;
       };
+
+      # Ephemeral pipeline cache — allow unauthenticated access.
+      # Server runs on private VPC only during pipeline execution.
+      # Build instances push NARs via nix copy --to without tokens.
+      require-proof-of-possession = false;
     };
   };
 
