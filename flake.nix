@@ -43,12 +43,15 @@
     ...
   } @ inputs: let
     # Minimal node identity shared by both mkAmi and nixosConfigurations.ami-builder
+    # Max-baked AMI identity: everything pre-configured so runtime only writes
+    # secrets + config.yaml + sentinels. No nixos-rebuild at boot.
     amiNodeIdentity = system: {
       kindling.nodeIdentity = {
         profile = "k3s-cloud-server";
         hostname = "ami-builder";
         user = { name = "root"; uid = 0; };
         secrets.provider = "sops";
+        secrets.age_key_file = "/var/lib/sops-nix/key.txt";
         hardware = {
           platform = system;
           cpu.vendor = if system == "x86_64-linux" then "amd" else "arm";
@@ -57,13 +60,28 @@
         };
         network.firewall = {
           allowed_tcp_ports = [];
-          allowed_udp_ports = [];
+          allowed_udp_ports = [51820]; # WireGuard listen port pre-baked in firewall
         };
         network.vpn_links = [];
         kubernetes = {
           role = "server";
           cluster_cidr = null;
           service_cidr = null;
+        };
+        # FluxCD pre-baked with placeholder values + sentinel gate.
+        # Real source/auth comes at runtime via kindling-init bootstrap.
+        # fluxcd-bootstrap.service waits for /var/lib/kindling/fluxcd-ready sentinel.
+        fluxcd = {
+          enable = true;
+          source = "https://github.com/pleme-io/k8s";
+          auth = "token";
+          token_file = "/run/secrets.d/flux-github-token";
+          reconcile = {
+            path = ".";
+            branch = "main";
+            interval = "2m0s";
+            prune = true;
+          };
         };
         nix.trusted_users = ["root"];
         nix.attic.token_file = null;

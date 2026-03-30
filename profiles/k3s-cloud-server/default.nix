@@ -91,6 +91,7 @@ in {
   # ── FluxCD (GitOps Bootstrap) ─────────────────────────────
   services.blackmatter.fluxcd = lib.mkIf ni.fluxcd.enable {
     enable = true;
+    conditionPath = "/var/lib/kindling/fluxcd-ready"; # sentinel written by kindling-init
     source = {
       url = ni.fluxcd.source;
       branch = ni.fluxcd.reconcile.branch or "main";
