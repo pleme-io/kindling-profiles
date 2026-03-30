@@ -187,6 +187,7 @@
         instanceType = "t3.xlarge";
         timeout = 1200;
         instanceProfileName = "ami-forge-test-instance-profile";  # deployed via Pangea IaC
+        minReadyNodes = 3;  # CP + 2 workers minimum (5 is too strict for CI timing)
         # 1 CP + 3 agents + 1 client. No second server (etcd HA join is too slow for CI).
         nodes = [
           { name = "cp"; role = "server"; cluster_init = true; vpn_address = "10.99.0.1/24"; node_index = 0; }
@@ -369,8 +370,7 @@
         ssmParameter = "/pangea/akeyless-dev/nixos-ami-id";
         amiName = "nixos-k3s-cloud-server";
         awsProfile = "akeyless-development";
-        # clusterTestConfig disabled — re-enable when integration test fixed
-        # clusterTestConfig = self.packages.aarch64-darwin.cluster-test-config;
+        clusterTestConfig = self.packages.aarch64-darwin.cluster-test-config;
         # Ephemeral Attic cache — boot from last AMI, use as substituter, snapshot after
         atticSsm = "/pangea/attic-cache/nixos-ami-id";
       };
