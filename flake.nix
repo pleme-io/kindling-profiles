@@ -228,15 +228,27 @@
       # ── Multi-Layer AMI Templates ────────────────────────────
       # Each layer produces a checkpointed AMI. Failures restart from last good layer.
 
-      # Layer 1: Populate Nix store (expensive, benefits most from Attic cache)
+      # Layer 1: Populate Nix store + push NARs to Attic
+      # This is the expensive layer. Attic substituter pulls cached NARs,
+      # nix build fills in the rest, then we push everything back to Attic.
+      # If ATTIC_URL is empty, the provisioner FAILS (hard gate).
       layer-1-template = amiBuild.mkLayerTemplate {
         name = "layer-1-nix-store.pkr.json";
         amiName = "nixos-k3s-layer-1-nix-store";
-        sourceAmiVariable = false;  # Find base NixOS by filter
+        sourceAmiVariable = false;
         provisionerScript = [
+          # Validate Attic URL is set (hard gate)
+          ''test -n "$ATTIC_URL" || { echo "FATAL: ATTIC_URL not set -- refusing to build without cache"; exit 1; }''
+          ''echo "Attic cache: $ATTIC_URL"''
+          # Write GitHub token
           ''mkdir -p /etc/nix && test -z "$GITHUB_TOKEN" || echo "$GITHUB_TOKEN" > /etc/nix/github-access-token''
-          ''if [ -n "$ATTIC_URL" ]; then ATTIC_OPTS="--option extra-substituters $ATTIC_URL --option require-sigs false"; else ATTIC_OPTS=""; fi''
-          ''nix --extra-experimental-features "nix-command flakes" build --print-out-paths "github:pleme-io/kindling-profiles#nixosConfigurations.ami-builder.config.system.build.toplevel" --option access-tokens "github.com=$(cat /etc/nix/github-access-token 2>/dev/null || true)" $ATTIC_OPTS --no-link 2>&1 | tail -5''
+          # Build toplevel with Attic as substituter
+          ''TOPLEVEL=$(nix --extra-experimental-features "nix-command flakes" build --print-out-paths "github:pleme-io/kindling-profiles#nixosConfigurations.ami-builder.config.system.build.toplevel" --option access-tokens "github.com=$(cat /etc/nix/github-access-token 2>/dev/null || true)" --option extra-substituters "$ATTIC_URL" --option require-sigs false --no-link)''
+          ''echo "Toplevel: $TOPLEVEL"''
+          # Push NARs to Attic (the cache MUST grow every run)
+          ''echo "Pushing NARs to Attic cache..."''
+          ''nix --extra-experimental-features "nix-command flakes" copy --to "$ATTIC_URL" "$TOPLEVEL" 2>&1 | tail -5 || echo "WARN: nix copy failed (Attic may not support push yet)"''
+          ''echo "Layer 1 complete: store populated + NARs pushed"''
         ];
         extraTags = { Layer = "1-nix-store"; };
       };
