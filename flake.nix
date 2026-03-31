@@ -88,6 +88,47 @@
       };
     };
 
+    # Minimal node identity for K8s (kubeadm) AMI builds
+    k8sAmiNodeIdentity = system: {
+      kindling.nodeIdentity = {
+        profile = "k8s-cloud-server";
+        hostname = "k8s-builder";
+        user = { name = "root"; uid = 0; };
+        secrets.provider = "sops";
+        secrets.age_key_file = "/var/lib/sops-nix/key.txt";
+        hardware = {
+          platform = system;
+          cpu.vendor = if system == "x86_64-linux" then "amd" else "arm";
+          kernel.modules = [];
+          kernel.params = [];
+        };
+        network.firewall = {
+          allowed_tcp_ports = [];
+          allowed_udp_ports = [51820]; # WireGuard listen port pre-baked in firewall
+        };
+        network.vpn_links = [];
+        kubernetes = {
+          role = "server";
+          cluster_cidr = null;
+          service_cidr = null;
+        };
+        fluxcd = {
+          enable = true;
+          source = "https://github.com/pleme-io/k8s";
+          auth = "token";
+          token_file = "/run/secrets.d/flux-github-token";
+          reconcile = {
+            path = ".";
+            branch = "main";
+            interval = "2m0s";
+            prune = true;
+          };
+        };
+        nix.trusted_users = ["root"];
+        nix.attic.token_file = null;
+      };
+    };
+
     # Minimal node identity for Attic server AMI builds
     atticNodeIdentity = system: {
       kindling.nodeIdentity = {
@@ -303,6 +344,47 @@
           "curl -sf http://localhost:8080/ || curl -sf http://localhost:8080/_status || true"
         ];
       };
+
+      # ── K8s (kubeadm) AMI Templates ─────────────────────────────
+      # Parallel pipeline for upstream Kubernetes via kubeadm.
+
+      # K8s cluster test config — 5-node topology for ami-forge cluster-test.
+      # Distribution-level config (kubernetes, kubeadm join) is injected via
+      # ami-forge's userdata generation, not the cluster test config.
+      k8s-cluster-test-config = amiBuild.mkClusterTestConfig {
+        instanceType = "t3.xlarge";
+        timeout = 1200;
+        instanceProfileName = "ami-forge-test-instance-profile";
+        minReadyNodes = 3;
+        clusterName = "k8s-cluster-test";
+        nodes = [
+          { name = "cp"; role = "server"; cluster_init = true; vpn_address = "10.99.0.1/24"; node_index = 0; }
+          { name = "worker1"; role = "agent"; vpn_address = "10.99.0.2/24"; node_index = 1; }
+          { name = "worker2"; role = "agent"; vpn_address = "10.99.0.3/24"; node_index = 2; }
+          { name = "worker3"; role = "agent"; vpn_address = "10.99.0.4/24"; node_index = 3; }
+          { name = "client"; role = "agent"; vpn_address = "10.99.0.5/24"; node_index = 4; }
+        ];
+      };
+
+      # K8s build template: base NixOS → nixos-rebuild → kindling ami-build → snapshot
+      k8s-build-template = amiBuild.mkBuildTemplate {
+        amiName = "nixos-k8s-cloud-server";
+        flakeRef = "github:pleme-io/kindling-profiles#k8s-builder";
+        provisionerScript = [
+          ''if [ -n "$ATTIC_URL" ]; then echo "Using Attic cache: $ATTIC_URL"; nixos-rebuild switch --flake $FLAKE_REF --option access-tokens github.com=$GITHUB_TOKEN --option extra-substituters "$ATTIC_URL" --option require-sigs false; else nixos-rebuild switch --flake $FLAKE_REF --option access-tokens github.com=$GITHUB_TOKEN; fi''
+          "export PATH=/run/current-system/sw/bin:$PATH"
+          "kindling ami-build --flake-ref $FLAKE_REF --skip-rebuild"
+        ];
+      };
+
+      # K8s test template: basic boot validation with --distribution kubernetes
+      k8s-test-template = amiBuild.mkTestTemplate {
+        instanceType = "t3.small";
+        testScript = [
+          "export PATH=/run/current-system/sw/bin:$PATH"
+          "kindling ami-test --distribution kubernetes"
+        ];
+      };
     };
 
     # NixOS configuration for Packer-based AMI builds (nixos-rebuild switch target)
@@ -326,6 +408,27 @@
             package = inputs.kindling.packages.x86_64-linux.default;
           };
           # Make kindling CLI available in PATH for ami-test and operator use
+          environment.systemPackages = [ inputs.kindling.packages.x86_64-linux.default ];
+        }
+      ];
+    };
+
+    # NixOS configuration for Packer-based K8s AMI builds (nixos-rebuild switch target)
+    nixosConfigurations.k8s-builder = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        self.nixosModules.default
+        inputs.sops-nix.nixosModules.sops
+        inputs.kindling.nixosModules.default
+        inputs.home-manager.nixosModules.home-manager
+        "${nixpkgs}/nixos/modules/virtualisation/amazon-image.nix"
+        ./profiles/k8s-cloud-server
+        (k8sAmiNodeIdentity "x86_64-linux")
+        {
+          services.kindling.server = {
+            enable = true;
+            package = inputs.kindling.packages.x86_64-linux.default;
+          };
           environment.systemPackages = [ inputs.kindling.packages.x86_64-linux.default ];
         }
       ];
@@ -385,6 +488,18 @@
         awsProfile = "akeyless-development";
         skipClusterTest = true;
       };
+      # K8s (kubeadm) AMI pipeline (build → basic test → promote)
+      k8sPipeline = amiBuild.mkAmiBuildPipeline {
+        forgePackage = inputs.ami-forge.packages.aarch64-darwin.default;
+        buildTemplate = self.packages.aarch64-darwin.k8s-build-template;
+        testTemplate = self.packages.aarch64-darwin.k8s-test-template;
+        ssmParameter = "/pangea/akeyless-dev/k8s-ami-id";
+        amiName = "nixos-k8s-cloud-server";
+        awsProfile = "akeyless-development";
+        clusterTestConfig = self.packages.aarch64-darwin.k8s-cluster-test-config;
+        atticSsm = "/pangea/attic-cache/nixos-ami-id";
+      };
+
       # Multi-layer K3s AMI pipeline — each layer checkpointed in SSM
       k3sLayeredPipeline = amiBuild.mkMultiLayerPipeline {
         forgePackage = inputs.ami-forge.packages.aarch64-darwin.default;
@@ -424,6 +539,10 @@
       attic-ami-build = atticPipeline.ami-build;
       attic-ami-test = atticPipeline.ami-test;
       attic-ami-status = atticPipeline.ami-status;
+      # K8s (kubeadm) pipeline apps
+      k8s-ami-build = k8sPipeline.ami-build;
+      k8s-ami-test = k8sPipeline.ami-test;
+      k8s-ami-status = k8sPipeline.ami-status;
     };
 
     # Profile library — used by kindling's generated flake
@@ -432,6 +551,7 @@
       k3s-server = ./profiles/k3s-server;
       k3s-agent = ./profiles/k3s-agent;
       k3s-cloud-server = ./profiles/k3s-cloud-server;
+      k8s-cloud-server = ./profiles/k8s-cloud-server;
       attic-server = ./profiles/attic-server;
     };
 
@@ -456,6 +576,11 @@
         description = "NixOS K3s server for cloud hosts (Hetzner/AWS) with WireGuard mesh and FluxCD";
         platform = "linux";
         components = ["k3s" "fluxcd" "wireguard" "firewall"];
+      };
+      k8s-cloud-server = {
+        description = "NixOS upstream Kubernetes (kubeadm) server for cloud hosts with containerd, etcd, WireGuard mesh, and FluxCD";
+        platform = "linux";
+        components = ["kubernetes" "kubeadm" "containerd" "etcd" "fluxcd" "wireguard" "firewall"];
       };
       attic-server = {
         description = "NixOS Attic binary cache server for storing Nix build artifacts with PostgreSQL and local storage";
