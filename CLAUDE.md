@@ -51,6 +51,24 @@ On any test failure, the AMI is **deregistered** (no bad AMIs in inventory).
 Builds the `attic-server` profile AMI. Simpler test (no K3s/VPN):
 validates `atticd.service` + `postgresql.service` are running.
 
+### K8s Pipeline (`nix run .#k8s-ami-build`)
+
+Builds the `k8s-cloud-server` profile AMI. Same pipeline structure as K3s:
+
+```
+Phase 1: Packer launches base NixOS EC2 -> runs provisioner:
+           nixos-rebuild switch --flake .#k8s-ami-builder
+           kindling ami-build --skip-rebuild
+Phase 2: ami-forge extracts AMI ID from packer-manifest.json
+Phase 3: Packer boots AMI with test userdata -> kindling ami-integration-test
+Phase 4: ami-forge promotes AMI to SSM parameter
+```
+
+Additional `nix run` apps for K8s pipeline:
+- `.#k8s-ami-build` -- Full pipeline (build, test, promote)
+- `.#k8s-ami-test` -- Re-test an existing K8s AMI without rebuilding
+- `.#k8s-ami-status` -- Show current promoted K8s AMI
+
 ---
 
 ## Test Userdata Injection

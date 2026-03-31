@@ -16,6 +16,7 @@ This repo also hosts the **AMI build pipelines** -- Nix-generated Packer templat
 | `k3s-server` | Linux | K3s control plane with FluxCD, IPVS, production tuning |
 | `k3s-agent` | Linux | K3s worker node with staging taints and node labels |
 | `k3s-cloud-server` | Linux | K3s server for cloud hosts (Hetzner/AWS) with WireGuard mesh |
+| `k8s-cloud-server` | Linux | Upstream Kubernetes (kubeadm) for cloud with containerd, etcd, WireGuard, FluxCD |
 | `attic-server` | Linux | Nix binary cache server (atticd + PostgreSQL) |
 
 ## Usage
@@ -45,6 +46,15 @@ nix run .#attic-ami-build
 # Re-test an existing AMI without rebuilding
 nix run .#ami-test
 
+# K8s upstream pipeline (build -> test -> promote)
+nix run .#k8s-ami-build
+
+# Re-test an existing K8s AMI
+nix run .#k8s-ami-test
+
+# Show current promoted K8s AMI
+nix run .#k8s-ami-status
+
 # Show current promoted AMI
 nix run .#ami-status
 ```
@@ -72,6 +82,7 @@ profiles/              Machine profile definitions
   k3s-cloud-server/    Cloud K3s server (VPN + FluxCD + firewall)
   k3s-server/          Bare-metal K3s server
   k3s-agent/           K3s worker node
+  k8s-cloud-server/    Cloud upstream K8s (kubeadm + containerd + etcd + VPN + FluxCD)
   attic-server/        Nix binary cache server
   macos-developer/     macOS workstation
 modules/
