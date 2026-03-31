@@ -227,7 +227,7 @@ in {
     smartmontools lsof tcpdump
     # Required by kubeadm
     conntrack-tools socat iproute2 iptables
-    crictl  # CRI debugging
+    cri-tools  # CRI debugging (crictl)
   ];
 
   # -- Nix --
