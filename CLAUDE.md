@@ -10,6 +10,7 @@ and the AMI build pipeline.
 | Profile | Platform | Purpose |
 |---------|----------|---------|
 | `k3s-cloud-server` | Linux | K3s control plane for cloud (AWS/Hetzner) with WireGuard mesh, FluxCD |
+| `k8s-cloud-server` | Linux | Upstream Kubernetes (kubeadm) for cloud with containerd, etcd, WireGuard, FluxCD |
 | `k3s-server` | Linux | K3s control plane for bare-metal with IPVS, production tuning |
 | `k3s-agent` | Linux | K3s worker node with staging taints and node labels |
 | `attic-server` | Linux | Nix binary cache (atticd + PostgreSQL) for AMI build acceleration |
@@ -131,6 +132,7 @@ Free to run (local QEMU, no cloud resources).
 ```
 profiles/              Machine profile definitions
   k3s-cloud-server/    Cloud K3s server (VPN + FluxCD + firewall)
+  k8s-cloud-server/    Cloud upstream K8s (kubeadm + containerd + etcd + VPN + FluxCD)
   k3s-server/          Bare-metal K3s server
   k3s-agent/           K3s worker node
   attic-server/        Nix binary cache server
