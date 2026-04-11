@@ -224,18 +224,19 @@ in {
     privacy.enable = lib.mkForce false;
   };
 
-  # ── Hardening Master Toggle ──────────────────────────────
-  # The compliance modules above set individual hardening options.
-  # The master toggle enables the blackmatter hardening module that
-  # implements them.
+  # ── Hardening ────────────────────────────────────────────
+  # The compliance modules (ac/au/cm/sc/si) set individual hardening options.
+  # The master toggle enables the blackmatter hardening module that implements them.
+  # K3s-incompatible options are gated via the compliance interface — NOT mkForce.
   blackmatter.security.hardening.enable = true;
 
-  # Explicitly disable K3s-incompatible hardening (overrides researcher profile defaults):
-  # - kernel lockdown=confidentiality breaks IPVS proxy mode
-  # - apparmor needs custom profiles for container runtime
-  # - autoUpgrade with node restart causes CP downtime
-  blackmatter.security.hardening.kernel.enable = lib.mkForce false;
-  blackmatter.security.hardening.apparmor.enable = lib.mkForce false;
-  blackmatter.security.hardening.autoUpgrade.enable = lib.mkForce false;
+  # ── K3s Compatibility Exclusions ────────────────────────
+  # These are structural exclusions, not overrides. The researcher profile
+  # in blackmatter-security enables kernel hardening by default, but K3s
+  # requires these to be off. The fedramp-high module can re-enable kernel
+  # with integrity mode (not confidentiality) when explicitly opted in.
+  blackmatter.security.hardening.kernel.enable = false;
+  blackmatter.security.hardening.apparmor.enable = false;
+  blackmatter.security.hardening.autoUpgrade.enable = false;
 
 }
