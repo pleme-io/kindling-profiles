@@ -168,12 +168,20 @@ in {
   i18n.defaultLocale = "en_US.UTF-8";
 
   # ── Packages ────────────────────────────────────────────────
+  # Minimal closure: only what's needed for convergence + operation.
+  # Diagnostic tools (htop, iotop, tcpdump) are available via nix-shell
+  # when needed — not baked into every AMI.
   nixpkgs.config.allowUnfree = true;
   environment.systemPackages = with pkgs; [
-    k3s kubectl k9s fluxcd
+    # Convergence primitives (required for bootstrap + operation)
+    k3s
+    kubectl
+    fluxcd
     wireguard-tools
-    htop nvme-cli ethtool iotop
-    smartmontools lsof tcpdump
+    # Diagnostics (minimal — operators use nix-shell for heavy tools)
+    htop
+    lsof
+    ethtool
   ];
 
   # ── Nix ─────────────────────────────────────────────────────
@@ -197,7 +205,8 @@ in {
   '';
 
   # ── Monitoring & Maintenance ───────────────────────────────
-  services.smartd.enable = true;
+  # smartd disabled — EC2 NVMe doesn't support SMART (and saves smartmontools from closure)
+  services.smartd.enable = false;
   services.logrotate.enable = true;
   services.fstrim.enable = true;
 
