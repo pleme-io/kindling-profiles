@@ -145,23 +145,84 @@ Free to run (local QEMU, no cloud resources).
 
 ---
 
+## Composable Compliance Layers
+
+FedRAMP controls are modeled as NixOS modules under `modules/compliance/`.
+Each module is a convergence layer — an independent set of invariants that
+can be toggled, tested, and composed.
+
+```
+modules/compliance/
+  ac.nix              Access Control (SSH, fail2ban, PAM) — AC-2/4/6/17
+  au.nix              Audit & Accountability (auditd) — AU-2/3/9/11/12
+  cm.nix              Configuration Management (tmpfs, TTY, USB) — CM-2/6/7/8
+  sc.nix              System & Comms Protection (sysctl, firewall) — SC-5/7/8/13/28/45
+  si.nix              System & Info Integrity (lynis, aide) — SI-2/4/7
+  fedramp-high.nix    FedRAMP High additive (kernel lockdown, persistent audit, FIPS)
+```
+
+Each module:
+- Has `kindling.compliance.{family}.enable` option
+- Is gated with `lib.mkIf cfg.enable` (zero-cost when disabled)
+- Maps to specific NIST 800-53 Rev 5 controls (documented in file header)
+- Is independently verifiable via NixOS VM test in `checks/`
+
+**k3s-cloud-server** enables all Moderate layers by default:
+```nix
+kindling.compliance = {
+  ac.enable = true;   # SSH, fail2ban, PAM
+  au.enable = true;   # auditd
+  cm.enable = true;   # tmpfs, TTY, USB
+  sc.enable = true;   # sysctl, firewall
+  si.enable = true;   # lynis, aide
+};
+```
+
+FedRAMP High is available but disabled: `kindling.compliance.fedramp-high.enable = false`.
+
+**K3s-incompatible hardening** is disabled by bare values in the profile (not mkForce):
+- `kernel.enable = false` — lockdown=confidentiality breaks IPVS
+- `apparmor.enable = false` — needs custom K3s container profiles
+- `autoUpgrade.enable = false` — node cycling causes CP downtime
+
+---
+
+## NixOS VM Compliance Tests
+
+Free, local QEMU tests verifying each compliance layer independently:
+
+| Test | Controls | What it verifies |
+|------|----------|-----------------|
+| `compliance-ac-test` | AC-2/6/17 | SSH key-only, fail2ban running, PAM limits |
+| `compliance-au-test` | AU-2/3/12 | auditd running, rules loaded, log directory |
+| `compliance-sc-test` | SC-5/7/13/28, SI-16 | 11 sysctl values, firewall active |
+| `vpn-test` | SC-7(4) | WireGuard tunnel connectivity, firewall isolation |
+
+Run all: `nix flake check`
+
+---
+
 ## Structure
 
 ```
 profiles/              Machine profile definitions
-  k3s-cloud-server/    Cloud K3s server (VPN + FluxCD + firewall)
-  k8s-cloud-server/    Cloud upstream K8s (kubeadm + containerd + etcd + VPN + FluxCD)
+  k3s-cloud-server/    Cloud K3s (VPN + FluxCD + compliance layers)
+  k8s-cloud-server/    Cloud upstream K8s (kubeadm + containerd + etcd)
   k3s-server/          Bare-metal K3s server
   k3s-agent/           K3s worker node
   attic-server/        Nix binary cache server
   macos-developer/     macOS workstation
 modules/
   node-identity.nix    Shared node identity interface
+  compliance/          Composable FedRAMP compliance layers (6 modules)
 lib/
-  k3s-defaults.nix     K3s kernel modules, flags, network defaults
+  k3s-defaults.nix     K3s kernel modules, flags, CIDRs, server flags
   mk-profile.nix       Profile construction helper
 schema/                Profile schema definitions
 checks/
-  vpn-test.nix         NixOS VM test for WireGuard
-flake.nix              Packer templates, AMI pipelines, profile exports
+  vpn-test.nix         WireGuard tunnel connectivity (2 VMs)
+  compliance-ac-test.nix  Access Control layer (SSH, fail2ban, PAM)
+  compliance-au-test.nix  Audit layer (auditd, rules, logs)
+  compliance-sc-test.nix  System protection layer (sysctl, firewall)
+flake.nix              Packer templates, AMI pipelines, profile exports, checks
 ```
