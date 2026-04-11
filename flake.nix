@@ -452,10 +452,25 @@
       ];
     };
 
-    # NixOS VM tests — validate WireGuard tunnel connectivity
-    checks.x86_64-linux.vpn-test = import ./checks/vpn-test.nix {
-      pkgs = import nixpkgs { system = "x86_64-linux"; };
-      lib = nixpkgs.lib;
+    # NixOS VM tests — convergence verification at the AMI layer
+    checks.x86_64-linux = let
+      testPkgs = import nixpkgs { system = "x86_64-linux"; };
+      testLib = nixpkgs.lib;
+    in {
+      # Network convergence: WireGuard tunnel connectivity
+      vpn-test = import ./checks/vpn-test.nix {
+        pkgs = testPkgs; lib = testLib;
+      };
+      # Compliance layer convergence: each independently verifiable
+      compliance-ac-test = import ./checks/compliance-ac-test.nix {
+        pkgs = testPkgs; lib = testLib;
+      };
+      compliance-au-test = import ./checks/compliance-au-test.nix {
+        pkgs = testPkgs; lib = testLib;
+      };
+      compliance-sc-test = import ./checks/compliance-sc-test.nix {
+        pkgs = testPkgs; lib = testLib;
+      };
     };
 
     # AMI pipeline apps — Packer orchestrates, ami-forge is a tool
