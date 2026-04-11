@@ -215,6 +215,9 @@ profiles/              Machine profile definitions
 modules/
   node-identity.nix    Shared node identity interface
   compliance/          Composable FedRAMP compliance layers (6 modules)
+  networking.nix       VPN, firewall, CIDRs (kindling.networking.*)
+  orchestration.nix    K3s/kubeadm, FluxCD, profiles (kindling.orchestration.*)
+  identity.nix         Secrets provider, bootstrap method (kindling.identity.*)
 lib/
   k3s-defaults.nix     K3s kernel modules, flags, CIDRs, server flags
   mk-profile.nix       Profile construction helper
