@@ -29,6 +29,9 @@ in {
     ../../modules/compliance/soc2.nix    # SOC 2 Type II (CC6/CC7/CC8)
     ../../modules/compliance/pci.nix     # PCI DSS 4.0 (Req 1-10)
     ../../modules/compliance/cis-l1.nix  # CIS Linux Benchmark Level 1
+    ../../modules/compliance/cis-l2.nix  # CIS Linux Benchmark Level 2 (extends L1)
+    ../../modules/compliance/hipaa.nix   # HIPAA Security Rule
+    ../../modules/compliance/iso27001.nix # ISO 27001:2022 Annex A
     # Domain control surfaces — typed interfaces for each convergence domain
     ../../modules/networking.nix      # VPN, firewall, CIDRs
     ../../modules/orchestration.nix   # K3s/kubeadm, FluxCD, profiles
