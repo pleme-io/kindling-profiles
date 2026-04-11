@@ -14,8 +14,28 @@
   ni = config.kindling.nodeIdentity;
   k3sDefaults = import ../../lib/k3s-defaults.nix {inherit lib;};
 in {
-  # ── Amazon AMI base (fileSystems, boot loader, EC2 tools) ──
-  imports = ["${modulesPath}/virtualisation/amazon-image.nix"];
+  # ── Amazon AMI base + composable compliance layers ─────────
+  imports = [
+    "${modulesPath}/virtualisation/amazon-image.nix"
+    # Compliance layers — each is an independent convergence invariant.
+    # Toggleable per profile. All enabled here for FedRAMP Moderate baseline.
+    ../../modules/compliance/ac.nix   # Access Control (SSH, fail2ban, PAM)
+    ../../modules/compliance/au.nix   # Audit & Accountability (auditd)
+    ../../modules/compliance/cm.nix   # Configuration Management (tmpfs, TTY, USB)
+    ../../modules/compliance/sc.nix   # System & Communications Protection (sysctl, firewall)
+    ../../modules/compliance/si.nix   # System & Information Integrity (lynis, aide)
+    ../../modules/compliance/fedramp-high.nix  # FedRAMP High additive (disabled by default)
+  ];
+
+  # Enable all compliance layers — FedRAMP Moderate requires all five.
+  # Individual clusters can disable specific layers via mkForce if needed.
+  kindling.compliance = {
+    ac.enable = lib.mkDefault true;
+    au.enable = lib.mkDefault true;
+    cm.enable = lib.mkDefault true;
+    sc.enable = lib.mkDefault true;
+    si.enable = lib.mkDefault true;
+  };
 
   # ── K3s Server ──────────────────────────────────────────────
   services.blackmatter.k3s = {
@@ -51,36 +71,6 @@ in {
     "nowatchdog"
   ] ++ ni.hardware.kernel.params;
   boot.blacklistedKernelModules = ["pcspkr"];
-
-  # ── Kernel Sysctl Hardening ───────────────────────────────
-  # K3s-required + FedRAMP hardening in one block.
-  # These are convergence invariants — they must hold in the AMI checkpoint.
-  boot.kernel.sysctl = {
-    # K3s required (mkDefault — may also be set by blackmatter K3s module)
-    "net.bridge.bridge-nf-call-iptables" = lib.mkDefault 1;
-    "net.bridge.bridge-nf-call-ip6tables" = lib.mkDefault 1;
-    "net.ipv4.ip_forward" = lib.mkDefault 1;
-    "fs.inotify.max_user_watches" = 1048576;
-    "fs.inotify.max_user_instances" = 8192;
-    # FedRAMP hardening — SC-5 (SYN flood), SC-7 (anti-spoofing)
-    "net.ipv4.tcp_syncookies" = 1;
-    "net.ipv4.conf.all.rp_filter" = 1;
-    "net.ipv4.conf.default.rp_filter" = 1;
-    "net.ipv4.conf.all.accept_redirects" = 0;
-    "net.ipv4.conf.default.accept_redirects" = 0;
-    "net.ipv4.conf.all.send_redirects" = 0;
-    "net.ipv4.conf.default.send_redirects" = 0;
-    "net.ipv4.conf.all.accept_source_route" = 0;
-    "net.ipv4.conf.default.accept_source_route" = 0;
-    "net.ipv4.conf.all.log_martians" = 1;
-    "net.ipv4.icmp_echo_ignore_broadcasts" = 1;
-    # Kernel hardening — SI-16
-    "kernel.dmesg_restrict" = 1;
-    "kernel.kptr_restrict" = 2;
-    "fs.protected_hardlinks" = 1;
-    "fs.protected_symlinks" = 1;
-    "fs.suid_dumpable" = 0;
-  };
 
   # ── Networking & Firewall ─────────────────────────────────
   networking.hostName = ni.hostname;
@@ -225,69 +215,13 @@ in {
     privacy.enable = lib.mkForce false;
   };
 
-  # ── FedRAMP Moderate Hardening (convergence invariants) ─────
-  # These are compliance invariants that must hold at the AMI convergence
-  # checkpoint. Enabled selectively to avoid K3s-incompatible settings
-  # (AppArmor custom profiles, kernel lockdown=confidentiality breaks IPVS).
-  blackmatter.security.hardening = {
-    enable = true;
-
-    # SSH hardening — IA-2(1), AC-17
-    ssh = {
-      enable = true;
-      maxAuthTries = 3;
-      disableForwarding = true;
-      modernCryptoOnly = true;
-      clientAliveInterval = 300;
-      clientAliveCountMax = 2;
-    };
-
-    # Brute-force protection — SC-5, SI-4
-    fail2ban = {
-      enable = true;
-      maxretry = 3;
-      bantime = "24h";
-      sshJail = { enable = true; maxretry = 3; bantime = "1h"; };
-    };
-
-    # Audit logging — AU-2, AU-3, AU-9, AU-12 (FedRAMP critical)
-    auditd = {
-      enable = true;
-      monitorFiles = true;
-      monitorSSHKeys = true;
-      monitorPrivEsc = true;
-      monitorDeletion = true;
-    };
-
-    # PAM resource limits — SC-5, SC-6
-    pam = {
-      enable = true;
-      disableCoreDumps = true;
-      maxOpenFiles = 65536;
-      maxProcesses = 32768;
-    };
-
-    # Firewall hardening with K3s-aware CIDRs — SC-7, AC-4
-    firewall = {
-      enable = true;
-      sshRateLimit = true;
-      blockTCPAnomalies = true;
-      allowedCIDRs = k3sDefaults.defaultAllowedCIDRs;
-      allowedInterfaces = ["cni0" "flannel.1"];
-    };
-
-    # Host hygiene — CM-7, SI-7
-    tmpfs = { enable = true; cleanOnBoot = true; };
-    tty.lockdown = true;
-    usb.restrictDevices = true;
-
-    # Security audit tools (lynis, aide) — CA-2, RA-5
-    tools.enable = true;
-
-    # NOT enabled (K3s incompatible):
-    # - apparmor: needs custom profiles for container runtime
-    # - kernel: lockdown=confidentiality breaks IPVS proxy mode
-    # - autoUpgrade: reboot on CP node causes cluster downtime
-  };
+  # ── Hardening Master Toggle ──────────────────────────────
+  # The compliance modules above set individual hardening options.
+  # The master toggle enables the blackmatter hardening module that
+  # implements them. NOT enabled (K3s incompatible):
+  # - apparmor: needs custom profiles for container runtime
+  # - kernel lockdown=confidentiality: breaks IPVS proxy mode
+  # - autoUpgrade with node restart: causes CP downtime
+  blackmatter.security.hardening.enable = true;
 
 }
