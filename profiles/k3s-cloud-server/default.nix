@@ -25,6 +25,10 @@ in {
     ../../modules/compliance/sc.nix   # System & Communications Protection (sysctl, firewall)
     ../../modules/compliance/si.nix   # System & Information Integrity (lynis, aide)
     ../../modules/compliance/fedramp-high.nix  # FedRAMP High additive (disabled by default)
+    # Domain control surfaces — typed interfaces for each convergence domain
+    ../../modules/networking.nix      # VPN, firewall, CIDRs
+    ../../modules/orchestration.nix   # K3s/kubeadm, FluxCD, profiles
+    ../../modules/identity.nix        # Secrets provider, bootstrap method
   ];
 
   # Enable all compliance layers — FedRAMP Moderate requires all five.
@@ -72,15 +76,12 @@ in {
   ] ++ ni.hardware.kernel.params;
   boot.blacklistedKernelModules = ["pcspkr"];
 
-  # ── Networking & Firewall ─────────────────────────────────
+  # ── Networking ───────────────────────────────────────────
+  # Firewall is managed by kindling.networking module (typed control surface).
+  # Additional ports from nodeIdentity are merged here.
   networking.hostName = ni.hostname;
-  networking.firewall = {
-    enable = true;
-    allowPing = true;
-    allowedTCPPorts = [22 6443 80 443 10250] ++ ni.network.firewall.allowed_tcp_ports;
-    allowedUDPPorts = [8472] ++ ni.network.firewall.allowed_udp_ports;
-    trustedInterfaces = ["cni0" "flannel.1"];
-  };
+  networking.firewall.allowedTCPPorts = ni.network.firewall.allowed_tcp_ports;
+  networking.firewall.allowedUDPPorts = ni.network.firewall.allowed_udp_ports;
 
   # ── VPN ────────────────────────────────────────────────────
   services.blackmatter.vpn = lib.mkIf (ni.network.vpn_links != []) {
@@ -230,13 +231,9 @@ in {
   # K3s-incompatible options are gated via the compliance interface — NOT mkForce.
   blackmatter.security.hardening.enable = true;
 
-  # ── K3s Compatibility Exclusions ────────────────────────
-  # These are structural exclusions, not overrides. The researcher profile
-  # in blackmatter-security enables kernel hardening by default, but K3s
-  # requires these to be off. The fedramp-high module can re-enable kernel
-  # with integrity mode (not confidentiality) when explicitly opted in.
-  blackmatter.security.hardening.kernel.enable = false;
-  blackmatter.security.hardening.apparmor.enable = false;
-  blackmatter.security.hardening.autoUpgrade.enable = false;
+  # K3s-incompatible hardening stays off (these default to false with
+  # researcher profile no longer auto-imported). The fedramp-high module
+  # can re-enable kernel with integrity mode when explicitly opted in.
+  # No overrides needed — proper lattice boundaries.
 
 }
