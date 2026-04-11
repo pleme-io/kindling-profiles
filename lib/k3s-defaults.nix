@@ -7,6 +7,9 @@
   defaultServiceCIDR = "10.43.0.0/16";
   defaultClusterDNS = "10.43.0.10";
 
+  # CIDRs that firewall hardening must allow (pod + service networks)
+  defaultAllowedCIDRs = ["10.42.0.0/16" "10.43.0.0/16"];
+
   # Common kubelet flags for production tuning
   serverKubeletFlags = [
     "--kubelet-arg=eviction-hard=memory.available<500Mi"
