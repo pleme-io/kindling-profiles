@@ -25,10 +25,16 @@ in {
     ../../modules/compliance/sc.nix   # System & Communications Protection (sysctl, firewall)
     ../../modules/compliance/si.nix   # System & Information Integrity (lynis, aide)
     ../../modules/compliance/fedramp-high.nix  # FedRAMP High additive (disabled by default)
+    # Additional compliance frameworks (disabled by default, enable per cluster)
+    ../../modules/compliance/soc2.nix    # SOC 2 Type II (CC6/CC7/CC8)
+    ../../modules/compliance/pci.nix     # PCI DSS 4.0 (Req 1-10)
+    ../../modules/compliance/cis-l1.nix  # CIS Linux Benchmark Level 1
     # Domain control surfaces — typed interfaces for each convergence domain
     ../../modules/networking.nix      # VPN, firewall, CIDRs
     ../../modules/orchestration.nix   # K3s/kubeadm, FluxCD, profiles
     ../../modules/identity.nix        # Secrets provider, bootstrap method
+    ../../modules/observability.nix   # Logging, metrics, tracing
+    ../../modules/fleet.nix           # Reverse-access fleet control
   ];
 
   # Enable all compliance layers — FedRAMP Moderate requires all five.
