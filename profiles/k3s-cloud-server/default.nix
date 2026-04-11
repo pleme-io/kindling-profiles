@@ -227,10 +227,15 @@ in {
   # ── Hardening Master Toggle ──────────────────────────────
   # The compliance modules above set individual hardening options.
   # The master toggle enables the blackmatter hardening module that
-  # implements them. NOT enabled (K3s incompatible):
-  # - apparmor: needs custom profiles for container runtime
-  # - kernel lockdown=confidentiality: breaks IPVS proxy mode
-  # - autoUpgrade with node restart: causes CP downtime
+  # implements them.
   blackmatter.security.hardening.enable = true;
+
+  # Explicitly disable K3s-incompatible hardening (overrides researcher profile defaults):
+  # - kernel lockdown=confidentiality breaks IPVS proxy mode
+  # - apparmor needs custom profiles for container runtime
+  # - autoUpgrade with node restart causes CP downtime
+  blackmatter.security.hardening.kernel.enable = lib.mkForce false;
+  blackmatter.security.hardening.apparmor.enable = lib.mkForce false;
+  blackmatter.security.hardening.autoUpgrade.enable = lib.mkForce false;
 
 }
