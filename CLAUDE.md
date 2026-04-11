@@ -225,4 +225,7 @@ checks/
   compliance-au-test.nix  Audit layer (auditd, rules, logs)
   compliance-sc-test.nix  System protection layer (sysctl, firewall)
 flake.nix              Packer templates, AMI pipelines, profile exports, checks
+docs/
+  convergence-ami.md   AMI as convergence checkpoint (18 gates, cache strategy)
+  lattice-modules.md   Module as universal lattice primitive (design rules, cross-system)
 ```
