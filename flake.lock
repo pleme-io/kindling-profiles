@@ -25759,11 +25759,11 @@
         "substrate": "substrate_21"
       },
       "locked": {
-        "lastModified": 1775943726,
-        "narHash": "sha256-ASNNdmIS97tVg0V1SufBsqVMxZghpqtnthkWIjB9lgs=",
+        "lastModified": 1775945523,
+        "narHash": "sha256-o0FYED37S1wN+n/3quJPonXj/4rTS5CJJjPbt0O1P/Q=",
         "owner": "pleme-io",
         "repo": "kindling",
-        "rev": "af81c51e29f29d9220d092672e9bb922a65b66f4",
+        "rev": "4cab86cd6f661c74690070316f12a90ea3f2c3b5",
         "type": "github"
       },
       "original": {
