@@ -159,6 +159,9 @@ modules/compliance/
   sc.nix              System & Comms Protection (sysctl, firewall) — SC-5/7/8/13/28/45
   si.nix              System & Info Integrity (lynis, aide) — SI-2/4/7
   fedramp-high.nix    FedRAMP High additive (kernel lockdown, persistent audit, FIPS)
+  soc2.nix            SOC 2 Type II (CC6/CC7/CC8, composes NIST layers)
+  pci.nix             PCI DSS 4.0 (Req 1-10, network connection audit)
+  cis-l1.nix          CIS Linux Benchmark Level 1 (sections 1-6, TMOUT, umask)
 ```
 
 Each module:
@@ -218,6 +221,8 @@ modules/
   networking.nix       VPN, firewall, CIDRs (kindling.networking.*)
   orchestration.nix    K3s/kubeadm, FluxCD, profiles (kindling.orchestration.*)
   identity.nix         Secrets provider, bootstrap method (kindling.identity.*)
+  observability.nix    Logging, metrics, tracing (kindling.observability.*)
+  fleet.nix            Reverse-access fleet control (kindling.fleet.*)
 lib/
   k3s-defaults.nix     K3s kernel modules, flags, CIDRs, server flags
   mk-profile.nix       Profile construction helper
