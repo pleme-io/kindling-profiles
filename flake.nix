@@ -398,6 +398,10 @@
         # Preserve EC2/Amazon modules from the base AMI — amazon-init processes
         # userdata (cloud-init) at boot, writing /etc/pangea/cluster-config.json
         "${nixpkgs}/nixos/modules/virtualisation/amazon-image.nix"
+        # Reusable CloudWatch metric publisher — feeds BuilderQuiescentTriggerDecl
+        # alarm (Pleme/Builder/ActiveSshSessions) as the 10-20s backstop for the
+        # client-side watchdog on real builds.
+        "${inputs.substrate}/lib/infra/cloudwatch-metric-publisher.nix"
         ./profiles/k3s-cloud-server
         (amiNodeIdentity "x86_64-linux")
         {
@@ -409,6 +413,23 @@
           };
           # Make kindling CLI available in PATH for ami-test and operator use
           environment.systemPackages = [ inputs.kindling.packages.x86_64-linux.default ];
+
+          # Publish Pleme/Builder/ActiveSshSessions every 10s. Matches the
+          # canonical spec from arch-synthesizer
+          # BuilderQuiescentTriggerDecl::required_publisher(). CloudWatchAgentServerPolicy
+          # attached via pangea-architectures/lib/pangea/architectures/nix_builder_fleet.rb
+          # (line 177) already grants cloudwatch:PutMetricData.
+          pleme.metrics = {
+            enable = true;
+            publishers.builderActiveSsh = {
+              namespace = "Pleme/Builder";
+              metricName = "ActiveSshSessions";
+              intervalSecs = 10;
+              command = "ss -tHn state established '( sport = :22 )' | wc -l | tr -d ' '";
+              region = "us-east-1";
+              unit = "Count";
+            };
+          };
         }
       ];
     };
@@ -422,6 +443,9 @@
         inputs.kindling.nixosModules.default
         inputs.home-manager.nixosModules.home-manager
         "${nixpkgs}/nixos/modules/virtualisation/amazon-image.nix"
+        # Reusable CloudWatch metric publisher — feeds BuilderQuiescentTriggerDecl
+        # alarm (Pleme/Builder/ActiveSshSessions) as the 10-20s backstop.
+        "${inputs.substrate}/lib/infra/cloudwatch-metric-publisher.nix"
         ./profiles/k8s-cloud-server
         (k8sAmiNodeIdentity "x86_64-linux")
         {
@@ -430,6 +454,20 @@
             package = inputs.kindling.packages.x86_64-linux.default;
           };
           environment.systemPackages = [ inputs.kindling.packages.x86_64-linux.default ];
+
+          # Publish Pleme/Builder/ActiveSshSessions every 10s (see
+          # BuilderQuiescentTriggerDecl::required_publisher in arch-synthesizer).
+          pleme.metrics = {
+            enable = true;
+            publishers.builderActiveSsh = {
+              namespace = "Pleme/Builder";
+              metricName = "ActiveSshSessions";
+              intervalSecs = 10;
+              command = "ss -tHn state established '( sport = :22 )' | wc -l | tr -d ' '";
+              region = "us-east-1";
+              unit = "Count";
+            };
+          };
         }
       ];
     };
@@ -443,11 +481,30 @@
         inputs.kindling.nixosModules.default
         inputs.home-manager.nixosModules.home-manager
         "${nixpkgs}/nixos/modules/virtualisation/amazon-image.nix"
+        # Reusable CloudWatch metric publisher — feeds AtticQuiescentTriggerDecl
+        # alarm (Pleme/Attic/WriteCount). Matches
+        # AtticQuiescentTriggerDecl::required_publisher() in arch-synthesizer.
+        "${inputs.substrate}/lib/infra/cloudwatch-metric-publisher.nix"
         ./profiles/attic-server
         (atticNodeIdentity "x86_64-linux")
         {
           # Make kindling CLI available for ami-build validation
           environment.systemPackages = [ inputs.kindling.packages.x86_64-linux.default ];
+
+          # Publish Pleme/Attic/WriteCount every 10s — counts active connections
+          # on attic's HTTP (:8080) and HTTPS (:443) listeners. Mirrors
+          # AtticQuiescentTriggerDecl::required_publisher() from arch-synthesizer.
+          pleme.metrics = {
+            enable = true;
+            publishers.atticWriteCount = {
+              namespace = "Pleme/Attic";
+              metricName = "WriteCount";
+              intervalSecs = 10;
+              command = "ss -tHn state established '( sport = :8080 or sport = :443 )' | wc -l | tr -d ' '";
+              region = "us-east-1";
+              unit = "Count";
+            };
+          };
         }
       ];
     };
