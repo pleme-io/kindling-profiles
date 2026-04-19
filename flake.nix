@@ -544,18 +544,24 @@
         # the client-side watchdog on real nix-daemon dispatch builds.
         "${inputs.substrate}/lib/infra/cloudwatch-metric-publisher.nix"
         ./profiles/aws-node-base
-        # Cordel overlay — provides pkgs.cordel so the publisher's
-        # `useCordel = true` path resolves `${pkgs.cordel}/bin/cordel`
-        # at eval time. The aarch64-linux binary is cross-compiled via
-        # substrate's rust-workspace-release pattern (same 4-target
-        # matrix as every other pleme-io Rust tool).
-        ({ ... }: {
-          nixpkgs.overlays = [
-            (final: _prev: {
-              cordel = inputs.cordel.packages.aarch64-linux.default;
-            })
-          ];
-        })
+        # TODO(cordel-backport): cordel's flake uses `../arch-synthesizer`
+        # as a path dep, which crate2nix cannot prefetch from within a Nix
+        # sandbox (the path escapes the source root). Lifting cordel's
+        # arch-synthesizer dependency to a git-published crate is the
+        # prerequisite to flipping `useCordel = true` on this nixosConfig.
+        # Until then, the legacy bash publisher is safe: the backslash-
+        # continuation bug that bit us on first render is closed in
+        # substrate 50dcd00, and the resulting path is exercised by
+        # attestation tests in the current AMI. Re-enable the overlay
+        # below once cordel builds hermetically.
+        #
+        # ({ ... }: {
+        #   nixpkgs.overlays = [
+        #     (final: _prev: {
+        #       cordel = inputs.cordel.packages.aarch64-linux.default;
+        #     })
+        #   ];
+        # })
         {
           # Shared AWS node conventions — role="builder" auto-configures
           # Pleme/Builder/ActiveSshSessions per
@@ -576,13 +582,10 @@
             hardening = "high";
           };
 
-          # Switch the CloudWatch metric publisher to the cordel backend.
-          # Retires the fragile Nix-string bash script (the one that just
-          # ate us with the backslash-continuation bug on first render of
-          # this nixosConfig). The cordel op reads a typed YAML config and
-          # calls put-metric-data via the AWS SDK — no shell escaping,
-          # schema-verified source spec, provably integer at seal time.
-          pleme.metrics.useCordel = true;
+          # TODO(cordel-backport): flip to `true` once cordel builds
+          # hermetically (currently blocked by path deps — see overlay
+          # TODO above). Legacy bash publisher is the active path for now.
+          # pleme.metrics.useCordel = true;
 
           # Nix remote builder config: ryn ssh-dispatches derivations
           # to this node over the `builder` account. The daemon accepts
