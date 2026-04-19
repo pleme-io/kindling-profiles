@@ -35,6 +35,16 @@
       url = "github:pleme-io/ami-forge";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Typed ops helper — replaces the legacy Nix-string bash publisher in
+    # substrate/lib/infra/cloudwatch-metric-publisher.nix when
+    # `pleme.metrics.useCordel = true`. Cordel's `metric-publish` op reads
+    # a typed YAML config and runs one `aws cloudwatch put-metric-data` via
+    # the AWS SDK — no escaping/backslash-continuation bugs, schema-verified
+    # source specs, attestable.
+    cordel = {
+      url = "github:pleme-io/cordel";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = {
@@ -534,6 +544,18 @@
         # the client-side watchdog on real nix-daemon dispatch builds.
         "${inputs.substrate}/lib/infra/cloudwatch-metric-publisher.nix"
         ./profiles/aws-node-base
+        # Cordel overlay — provides pkgs.cordel so the publisher's
+        # `useCordel = true` path resolves `${pkgs.cordel}/bin/cordel`
+        # at eval time. The aarch64-linux binary is cross-compiled via
+        # substrate's rust-workspace-release pattern (same 4-target
+        # matrix as every other pleme-io Rust tool).
+        ({ ... }: {
+          nixpkgs.overlays = [
+            (final: _prev: {
+              cordel = inputs.cordel.packages.aarch64-linux.default;
+            })
+          ];
+        })
         {
           # Shared AWS node conventions — role="builder" auto-configures
           # Pleme/Builder/ActiveSshSessions per
@@ -553,6 +575,14 @@
             hostnameFromInstanceTag = false;
             hardening = "high";
           };
+
+          # Switch the CloudWatch metric publisher to the cordel backend.
+          # Retires the fragile Nix-string bash script (the one that just
+          # ate us with the backslash-continuation bug on first render of
+          # this nixosConfig). The cordel op reads a typed YAML config and
+          # calls put-metric-data via the AWS SDK — no shell escaping,
+          # schema-verified source spec, provably integer at seal time.
+          pleme.metrics.useCordel = true;
 
           # Nix remote builder config: ryn ssh-dispatches derivations
           # to this node over the `builder` account. The daemon accepts
