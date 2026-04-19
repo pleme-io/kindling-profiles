@@ -403,6 +403,7 @@
         # client-side watchdog on real builds.
         "${inputs.substrate}/lib/infra/cloudwatch-metric-publisher.nix"
         ./profiles/k3s-cloud-server
+        ./profiles/aws-node-base
         (amiNodeIdentity "x86_64-linux")
         {
           # Enable kindling bootstrap service — reads /etc/pangea/cluster-config.json
@@ -414,21 +415,16 @@
           # Make kindling CLI available in PATH for ami-test and operator use
           environment.systemPackages = [ inputs.kindling.packages.x86_64-linux.default ];
 
-          # Publish Pleme/Builder/ActiveSshSessions every 10s. Matches the
-          # canonical spec from arch-synthesizer
-          # BuilderQuiescentTriggerDecl::required_publisher(). CloudWatchAgentServerPolicy
-          # attached via pangea-architectures/lib/pangea/architectures/nix_builder_fleet.rb
-          # (line 177) already grants cloudwatch:PutMetricData.
-          pleme.metrics = {
+          # Shared AWS node conventions + role-derived CloudWatch publisher.
+          # role="builder" auto-configures Pleme/Builder/ActiveSshSessions @ 10s,
+          # matching BuilderQuiescentTriggerDecl::required_publisher() in
+          # arch-synthesizer. Hostname from instance tag disabled at AMI build
+          # time so the baked image stays idempotent.
+          pleme.aws-node = {
             enable = true;
-            publishers.builderActiveSsh = {
-              namespace = "Pleme/Builder";
-              metricName = "ActiveSshSessions";
-              intervalSecs = 10;
-              command = "ss -tHn state established '( sport = :22 )' | wc -l | tr -d ' '";
-              region = "us-east-1";
-              unit = "Count";
-            };
+            role = "builder";
+            platform = "quero";
+            hostnameFromInstanceTag = false;
           };
         }
       ];
@@ -447,6 +443,7 @@
         # alarm (Pleme/Builder/ActiveSshSessions) as the 10-20s backstop.
         "${inputs.substrate}/lib/infra/cloudwatch-metric-publisher.nix"
         ./profiles/k8s-cloud-server
+        ./profiles/aws-node-base
         (k8sAmiNodeIdentity "x86_64-linux")
         {
           services.kindling.server = {
@@ -455,18 +452,14 @@
           };
           environment.systemPackages = [ inputs.kindling.packages.x86_64-linux.default ];
 
-          # Publish Pleme/Builder/ActiveSshSessions every 10s (see
-          # BuilderQuiescentTriggerDecl::required_publisher in arch-synthesizer).
-          pleme.metrics = {
+          # Shared AWS node conventions — role="builder" maps to
+          # Pleme/Builder/ActiveSshSessions per
+          # BuilderQuiescentTriggerDecl::required_publisher().
+          pleme.aws-node = {
             enable = true;
-            publishers.builderActiveSsh = {
-              namespace = "Pleme/Builder";
-              metricName = "ActiveSshSessions";
-              intervalSecs = 10;
-              command = "ss -tHn state established '( sport = :22 )' | wc -l | tr -d ' '";
-              region = "us-east-1";
-              unit = "Count";
-            };
+            role = "builder";
+            platform = "quero";
+            hostnameFromInstanceTag = false;
           };
         }
       ];
@@ -486,24 +479,19 @@
         # AtticQuiescentTriggerDecl::required_publisher() in arch-synthesizer.
         "${inputs.substrate}/lib/infra/cloudwatch-metric-publisher.nix"
         ./profiles/attic-server
+        ./profiles/aws-node-base
         (atticNodeIdentity "x86_64-linux")
         {
           # Make kindling CLI available for ami-build validation
           environment.systemPackages = [ inputs.kindling.packages.x86_64-linux.default ];
 
-          # Publish Pleme/Attic/WriteCount every 10s — counts active connections
-          # on attic's HTTP (:8080) and HTTPS (:443) listeners. Mirrors
-          # AtticQuiescentTriggerDecl::required_publisher() from arch-synthesizer.
-          pleme.metrics = {
+          # Shared AWS node conventions — role="attic" auto-configures
+          # Pleme/Attic/WriteCount per AtticQuiescentTriggerDecl::required_publisher().
+          pleme.aws-node = {
             enable = true;
-            publishers.atticWriteCount = {
-              namespace = "Pleme/Attic";
-              metricName = "WriteCount";
-              intervalSecs = 10;
-              command = "ss -tHn state established '( sport = :8080 or sport = :443 )' | wc -l | tr -d ' '";
-              region = "us-east-1";
-              unit = "Count";
-            };
+            role = "attic";
+            platform = "quero";
+            hostnameFromInstanceTag = false;
           };
         }
       ];
@@ -528,6 +516,14 @@
       compliance-sc-test = import ./checks/compliance-sc-test.nix {
         pkgs = testPkgs; lib = testLib;
       };
+      # Pure-eval tests for the blackmatter-aws-node base profile
+      # (role -> publisher derivation, expected tags, SSM/awscli/SSH defaults).
+      # Derivation wraps the eval so `nix flake check` surfaces failures.
+      aws-node-base-eval = testPkgs.runCommand "aws-node-base-eval" {} ''
+        cat > $out <<EOF
+        ${builtins.toJSON (import ./profiles/aws-node-base/tests.nix { pkgs = testPkgs; })}
+        EOF
+      '';
     };
 
     # AMI pipeline apps — Packer orchestrates, ami-forge is a tool
