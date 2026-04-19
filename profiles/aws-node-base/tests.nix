@@ -109,12 +109,29 @@
               type = lib.types.attrsOf lib.types.unspecified;
               default = {};
             };
+            services.journald.extraConfig = lib.mkOption {
+              type = lib.types.lines;
+              default = "";
+            };
             systemd.services = lib.mkOption {
               type = lib.types.attrsOf lib.types.unspecified;
               default = {};
             };
             systemd.timers = lib.mkOption {
               type = lib.types.attrsOf lib.types.unspecified;
+              default = {};
+            };
+            # The compliance modules (ac/au/cm/sc/si + fedramp-high) drive
+            # `blackmatter.security.hardening.*` and `boot.kernel.sysctl`.
+            # These are declared by the blackmatter + nixpkgs module sets
+            # respectively, which the eval harness does not load. Declare
+            # freeform stubs so the compliance layer bodies evaluate cleanly.
+            blackmatter = lib.mkOption {
+              type = lib.types.attrsOf lib.types.anything;
+              default = {};
+            };
+            boot.kernel.sysctl = lib.mkOption {
+              type = lib.types.attrsOf lib.types.anything;
               default = {};
             };
           };

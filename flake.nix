@@ -487,11 +487,17 @@
 
           # Shared AWS node conventions — role="attic" auto-configures
           # Pleme/Attic/WriteCount per AtticQuiescentTriggerDecl::required_publisher().
+          # hardening="high": attic-seed workers serve other nodes' derivations
+          # out of their own Nix store, so they handle cross-node secrets in
+          # closure paths. FedRAMP High additive (kernel lockdown in integrity
+          # mode, persistent audit, FIPS-aware crypto) is safe here -- no
+          # K3s/IPVS on this node.
           pleme.aws-node = {
             enable = true;
             role = "attic";
             platform = "quero";
             hostnameFromInstanceTag = false;
+            hardening = "high";
           };
         }
       ];
@@ -534,11 +540,18 @@
           # BuilderQuiescentTriggerDecl::required_publisher() in
           # arch-synthesizer. hostnameFromInstanceTag disabled at AMI
           # build time so the image stays idempotent.
+          # hardening="high": ryn/nix-daemon dispatches derivations to this
+          # node, so the node handles other operators' secrets (sops age
+          # keys, akeyless tokens) in the derivation closure. FedRAMP High
+          # additive (kernel lockdown integrity mode, persistent audit,
+          # FIPS-aware crypto) is the right baseline here -- no K3s/IPVS
+          # on this node, so kernel lockdown is safe.
           pleme.aws-node = {
             enable = true;
             role = "builder";
             platform = "quero";
             hostnameFromInstanceTag = false;
+            hardening = "high";
           };
 
           # Nix remote builder config: ryn ssh-dispatches derivations

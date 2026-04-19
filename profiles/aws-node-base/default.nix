@@ -112,6 +112,21 @@ in {
   #   "${inputs.substrate}/lib/infra/cloudwatch-metric-publisher.nix"
   # The base profile just consumes the `pleme.metrics.*` option namespace that
   # module defines. Role profiles keep that import line in flake.nix.
+  #
+  # Compliance layer imports ARE pulled in here so that nixosConfigurations
+  # that do NOT import `k3s-cloud-server` (notably pangea-builder — an
+  # aarch64 Nix remote-build worker with no cluster role) still resolve the
+  # `kindling.compliance.*` option namespace and can participate in the
+  # typed `pleme.aws-node.hardening` enum below. Nix module imports are
+  # idempotent; double-importing from k3s-cloud-server is safe.
+  imports = [
+    ../../modules/compliance/ac.nix           # Access Control (SSH, fail2ban, PAM)
+    ../../modules/compliance/au.nix           # Audit & Accountability (auditd)
+    ../../modules/compliance/cm.nix           # Configuration Management (tmpfs, TTY, USB)
+    ../../modules/compliance/sc.nix           # System & Communications Protection (sysctl, firewall)
+    ../../modules/compliance/si.nix           # System & Information Integrity (lynis, aide)
+    ../../modules/compliance/fedramp-high.nix # FedRAMP High additive (kernel lockdown, FIPS)
+  ];
 
   options.pleme.aws-node = {
     enable = lib.mkEnableOption "pleme AWS node base hardening + conventions";
@@ -161,6 +176,23 @@ in {
         the system hostname to that value before `network-online.target`.
         When false (AMI build time), the NixOS static hostname is used so the
         image remains idempotent.
+      '';
+    };
+
+    hardening = lib.mkOption {
+      type = lib.types.enum ["moderate" "high"];
+      default = "moderate";
+      description = ''
+        Hardening baseline. `moderate` = FedRAMP Moderate (AC/AU/CM/SC/SI).
+        `high` = FedRAMP High additive (kernel lockdown, FIPS, persistent audit)
+        -- use for trusted remote-build targets, attic-seed workers, and any
+        node handling other nodes' secrets in derivations.
+
+        Note: kernel lockdown (pulled in by `high` via fedramp-high.nix) is
+        incompatible with K3s IPVS and upstream Kubernetes kubelet. AMIs that
+        run k3s/k8s (`ami-builder`, `k8s-builder`) MUST stay at `moderate`.
+        Trusted build-only nodes (`pangea-builder`, `attic-builder`) should
+        opt in to `high`.
       '';
     };
 
@@ -229,6 +261,26 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    # ── 0. Compliance baseline wiring ────────────────────────────
+    # Map the typed `hardening` enum onto the `kindling.compliance.*` layers
+    # the aws-node-base profile imports above. Always enables the FedRAMP
+    # Moderate family (AC/AU/CM/SC/SI); `high` additionally enables the
+    # fedramp-high additive layer (kernel lockdown, persistent audit, FIPS).
+    #
+    # All assignments use `lib.mkDefault` so role profiles (notably
+    # k3s-cloud-server, which already sets these with the same priority) can
+    # still opt-out of individual families without `mkForce`. Two mkDefault
+    # values both set to `true` resolve to `true` by module-system OR
+    # semantics -- no conflict.
+    kindling.compliance = {
+      ac.enable = lib.mkDefault true;
+      au.enable = lib.mkDefault true;
+      cm.enable = lib.mkDefault true;
+      sc.enable = lib.mkDefault true;
+      si.enable = lib.mkDefault true;
+      fedramp-high.enable = lib.mkDefault (cfg.hardening == "high");
+    };
+
     # ── 1. IMDSv2 required ──────────────────────────────────────
     # This is a launch-template property (set by AmiConventionDecl/Packer/TF).
     # On the node side we express the invariant via an assertion: if any
