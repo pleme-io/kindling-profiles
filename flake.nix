@@ -544,24 +544,20 @@
         # the client-side watchdog on real nix-daemon dispatch builds.
         "${inputs.substrate}/lib/infra/cloudwatch-metric-publisher.nix"
         ./profiles/aws-node-base
-        # TODO(cordel-backport): cordel's flake uses `../arch-synthesizer`
-        # as a path dep, which crate2nix cannot prefetch from within a Nix
-        # sandbox (the path escapes the source root). Lifting cordel's
-        # arch-synthesizer dependency to a git-published crate is the
-        # prerequisite to flipping `useCordel = true` on this nixosConfig.
-        # Until then, the legacy bash publisher is safe: the backslash-
-        # continuation bug that bit us on first render is closed in
-        # substrate 50dcd00, and the resulting path is exercised by
-        # attestation tests in the current AMI. Re-enable the overlay
-        # below once cordel builds hermetically.
-        #
-        # ({ ... }: {
-        #   nixpkgs.overlays = [
-        #     (final: _prev: {
-        #       cordel = inputs.cordel.packages.aarch64-linux.default;
-        #     })
-        #   ];
-        # })
+        # Cordel overlay — provides pkgs.cordel so substrate's publisher
+        # module resolves `${pkgs.cordel}/bin/cordel` when
+        # `pleme.metrics.useCordel = true`. The aarch64-linux binary is
+        # cross-compiled via substrate's rust-workspace-release pattern,
+        # fully hermetic since cordel@6d1d547 swapped its path dep on
+        # `../arch-synthesizer` for a git dep on the self-contained
+        # `pleme-io/arch-synthesizer-types` crate.
+        ({ ... }: {
+          nixpkgs.overlays = [
+            (final: _prev: {
+              cordel = inputs.cordel.packages.aarch64-linux.default;
+            })
+          ];
+        })
         {
           # Shared AWS node conventions — role="builder" auto-configures
           # Pleme/Builder/ActiveSshSessions per
@@ -582,10 +578,14 @@
             hardening = "high";
           };
 
-          # TODO(cordel-backport): flip to `true` once cordel builds
-          # hermetically (currently blocked by path deps — see overlay
-          # TODO above). Legacy bash publisher is the active path for now.
-          # pleme.metrics.useCordel = true;
+          # Cordel is hermetic since 6d1d547 — flip the module's dispatcher
+          # from the legacy writeShellScript bash path to
+          # `cordel metric-publish --config <typed-yaml>`. Types for source
+          # specs are serde_yaml-parsed at service start (loud failure, not
+          # 2am silent drift), put-metric-data runs via AWS SDK (no
+          # argument splitting, no shell escaping), and the whole op seals
+          # through `Attested<MetricPublish>` with BLAKE3 identity.
+          pleme.metrics.useCordel = true;
 
           # Nix remote builder config: ryn ssh-dispatches derivations
           # to this node over the `builder` account. The daemon accepts
