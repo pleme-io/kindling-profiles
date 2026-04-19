@@ -5361,11 +5361,11 @@
         "substrate": "substrate_28"
       },
       "locked": {
-        "lastModified": 1776638747,
-        "narHash": "sha256-F9NfMtota4B1CfPfnn7+GgD7fjHl4BTyilejcfzXGlY=",
+        "lastModified": 1776640449,
+        "narHash": "sha256-cCktjqBAuWY9Z0QjwdRocNBqKzVSCuEuoVo/PhrNLpg=",
         "owner": "pleme-io",
         "repo": "cordel",
-        "rev": "7b734a74f1008b7915b2bdc0af15ef80df73b9dd",
+        "rev": "890c1199ae7315aa08d1146abccf1a5d4ea09fc0",
         "type": "github"
       },
       "original": {
