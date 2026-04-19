@@ -497,6 +497,95 @@
       ];
     };
 
+    # NixOS configuration for the Pangea Nix remote-build worker AMI.
+    #
+    # Unlike ami-builder / k8s-builder / attic-builder, this profile is:
+    #   * aarch64-linux — serves arm64 Linux derivations to aarch64-darwin
+    #     operators (ryn) through nix-daemon dispatch over SSH.
+    #   * NO k3s / NO FluxCD — a Nix remote builder has no cluster role,
+    #     so the k3s-cloud-server profile (which pulls in flux-manifests.drv,
+    #     an x86_64-only IFD) is deliberately absent.
+    #   * Minimal userspace — openssh + nix daemon + aws-node-base.
+    #     Everything else (VPN, kindling-init, FluxCD) is explicitly NOT
+    #     imported so the closure stays small and evaluation is total on
+    #     aarch64 without a remote x86_64 helper.
+    #
+    # Consumed by pangea-architectures/workspaces/platform-packer with
+    # `nixos_profile = "pangea-builder"` in the platform YAML. Activated
+    # at Packer build time by the provisioner via
+    #   TOPLEVEL=$(nix build ...#nixosConfigurations.pangea-builder.config.system.build.toplevel)
+    #   switch-to-configuration switch
+    nixosConfigurations.pangea-builder = nixpkgs.lib.nixosSystem {
+      system = "aarch64-linux";
+      modules = [
+        self.nixosModules.default
+        inputs.sops-nix.nixosModules.sops
+        inputs.home-manager.nixosModules.home-manager
+        "${nixpkgs}/nixos/modules/virtualisation/amazon-image.nix"
+        # Reusable CloudWatch metric publisher — feeds
+        # BuilderQuiescentTriggerDecl alarm
+        # (Pleme/Builder/ActiveSshSessions) as the 10-20s backstop for
+        # the client-side watchdog on real nix-daemon dispatch builds.
+        "${inputs.substrate}/lib/infra/cloudwatch-metric-publisher.nix"
+        ./profiles/aws-node-base
+        {
+          # Shared AWS node conventions — role="builder" auto-configures
+          # Pleme/Builder/ActiveSshSessions per
+          # BuilderQuiescentTriggerDecl::required_publisher() in
+          # arch-synthesizer. hostnameFromInstanceTag disabled at AMI
+          # build time so the image stays idempotent.
+          pleme.aws-node = {
+            enable = true;
+            role = "builder";
+            platform = "quero";
+            hostnameFromInstanceTag = false;
+          };
+
+          # Nix remote builder config: ryn ssh-dispatches derivations
+          # to this node over the `builder` account. The daemon accepts
+          # the `builder` user's connections (trusted-users) and runs
+          # the full derivation.
+          nix.settings = {
+            experimental-features = [ "nix-command" "flakes" ];
+            trusted-users = [ "root" "builder" ];
+            # Keep the builder fast: don't garbage-collect the attic
+            # seed while a build is in progress. Scheduled gc lives in
+            # aws-node-base.nightlyMaintenance.
+            auto-optimise-store = true;
+          };
+
+          services.openssh = {
+            enable = true;
+            settings = {
+              # Remote dispatch via SSH; password auth is off per
+              # aws-node-base hardening.
+              PermitRootLogin = "prohibit-password";
+              PasswordAuthentication = false;
+            };
+          };
+
+          # Authorized public key for the `builder` user — private
+          # counterpart decrypts from SOPS on operator machines
+          # (ryn) as ~/.ssh/pangea-builder. Sourced from
+          # pangea-architectures/platforms/quero.yaml
+          # (builder_fleet.ssh_public_key).
+          users.users.builder = {
+            isNormalUser = true;
+            extraGroups = [ "wheel" ];
+            openssh.authorizedKeys.keys = [
+              "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII+WToJymXGGMFQB+Hlb8s7HZTDSLJFf+T3YpLxUg8QM pangea-builder@ryn"
+            ];
+          };
+          # Root also receives the same key so nix-daemon over SSH as
+          # root (the default when derivations need privileged ops)
+          # works without switching accounts.
+          users.users.root.openssh.authorizedKeys.keys = [
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII+WToJymXGGMFQB+Hlb8s7HZTDSLJFf+T3YpLxUg8QM pangea-builder@ryn"
+          ];
+        }
+      ];
+    };
+
     # NixOS VM tests — convergence verification at the AMI layer
     checks.x86_64-linux = let
       testPkgs = import nixpkgs { system = "x86_64-linux"; };
