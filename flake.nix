@@ -648,6 +648,13 @@
         "${nixpkgs}/nixos/modules/virtualisation/amazon-image.nix"
         "${inputs.substrate}/lib/infra/cloudwatch-metric-publisher.nix"
         ./profiles/aws-node-base
+        ({ ... }: {
+          nixpkgs.overlays = [
+            (final: _prev: {
+              cordel = inputs.cordel.packages.x86_64-linux.default;
+            })
+          ];
+        })
         {
           pleme.aws-node = {
             enable = true;
@@ -659,7 +666,7 @@
             # linux-hardened kernel rebuild (FIPS-aware crypto,
             # kernel lockdown integrity mode, persistent audit) and
             # there is no substituter pre-warmed for x86_64 →
-            # ~45-60 min compile on a c7a.large with 2 vCPU. The
+            # ~45-60 min compile on the bake instance. The
             # kindling `harden` step already applies the full
             # base+hardened+ami-snapshot profile stack in the
             # provisioner (22 primitives, CIS-L1 aligned), so we
@@ -671,13 +678,13 @@
             # the pre-built linux-hardened kernel closure.
           };
 
-          # pleme.metrics.useCordel deliberately left OFF for x86_64.
-          # cordel's x86_64-linux output is a musl-static build
-          # (aws-sdk-ec2 ~10k API types compiled from source) and
-          # OOMs at nixos-rebuild time on c7a.xlarge (8GB). The
-          # legacy shell-script publisher has no compile footprint
-          # and covers the ActiveSshSessions metric. Turn on once
-          # an x86_64 attic substituter caches the musl binary.
+          # Typed Rust metric publisher (cordel) — no shell, no
+          # IMDS-dance, no ec2:DescribeTags. cordel's x86_64-linux
+          # output is a musl-static build; the aws-sdk-ec2 compile is
+          # heavy (~10k API types), so the bake instance needs
+          # >= 16GB RAM — quero-infrastructure/flake.nix targets
+          # c7a.2xlarge for x86_64 to give that headroom.
+          pleme.metrics.useCordel = true;
 
           nix.settings = {
             experimental-features = [ "nix-command" "flakes" ];
