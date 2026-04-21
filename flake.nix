@@ -648,13 +648,6 @@
         "${nixpkgs}/nixos/modules/virtualisation/amazon-image.nix"
         "${inputs.substrate}/lib/infra/cloudwatch-metric-publisher.nix"
         ./profiles/aws-node-base
-        ({ ... }: {
-          nixpkgs.overlays = [
-            (final: _prev: {
-              cordel = inputs.cordel.packages.x86_64-linux.default;
-            })
-          ];
-        })
         {
           pleme.aws-node = {
             enable = true;
@@ -678,7 +671,13 @@
             # the pre-built linux-hardened kernel closure.
           };
 
-          pleme.metrics.useCordel = true;
+          # pleme.metrics.useCordel deliberately left OFF for x86_64.
+          # cordel's x86_64-linux output is a musl-static build
+          # (aws-sdk-ec2 ~10k API types compiled from source) and
+          # OOMs at nixos-rebuild time on c7a.xlarge (8GB). The
+          # legacy shell-script publisher has no compile footprint
+          # and covers the ActiveSshSessions metric. Turn on once
+          # an x86_64 attic substituter caches the musl binary.
 
           nix.settings = {
             experimental-features = [ "nix-command" "flakes" ];
