@@ -632,6 +632,68 @@
       ];
     };
 
+    # x86_64-linux sibling of pangea-builder.
+    #
+    # Identical shape to the aarch64 variant above — `builder` user +
+    # trusted-users nix settings + authorized SSH key — but targets
+    # x86_64-linux and pulls the x86_64 cordel output. Consumed by
+    # the x86_64 slice of the substrate ami-build pipeline
+    # (ami-build-x86_64 in quero-infrastructure/flake.nix).
+    nixosConfigurations.pangea-builder-x86_64 = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        self.nixosModules.default
+        inputs.sops-nix.nixosModules.sops
+        inputs.home-manager.nixosModules.home-manager
+        "${nixpkgs}/nixos/modules/virtualisation/amazon-image.nix"
+        "${inputs.substrate}/lib/infra/cloudwatch-metric-publisher.nix"
+        ./profiles/aws-node-base
+        ({ ... }: {
+          nixpkgs.overlays = [
+            (final: _prev: {
+              cordel = inputs.cordel.packages.x86_64-linux.default;
+            })
+          ];
+        })
+        {
+          pleme.aws-node = {
+            enable = true;
+            role = "builder";
+            platform = "quero";
+            hostnameFromInstanceTag = false;
+            hardening = "high";
+          };
+
+          pleme.metrics.useCordel = true;
+
+          nix.settings = {
+            experimental-features = [ "nix-command" "flakes" ];
+            trusted-users = [ "root" "builder" ];
+            auto-optimise-store = true;
+          };
+
+          services.openssh = {
+            enable = true;
+            settings = {
+              PermitRootLogin = "prohibit-password";
+              PasswordAuthentication = false;
+            };
+          };
+
+          users.users.builder = {
+            isNormalUser = true;
+            extraGroups = [ "wheel" ];
+            openssh.authorizedKeys.keys = [
+              "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII+WToJymXGGMFQB+Hlb8s7HZTDSLJFf+T3YpLxUg8QM pangea-builder@ryn"
+            ];
+          };
+          users.users.root.openssh.authorizedKeys.keys = [
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII+WToJymXGGMFQB+Hlb8s7HZTDSLJFf+T3YpLxUg8QM pangea-builder@ryn"
+          ];
+        }
+      ];
+    };
+
     # NixOS VM tests — convergence verification at the AMI layer
     checks.x86_64-linux = let
       testPkgs = import nixpkgs { system = "x86_64-linux"; };
