@@ -661,7 +661,21 @@
             role = "builder";
             platform = "quero";
             hostnameFromInstanceTag = false;
-            hardening = "high";
+            # NOTE: deliberately NOT setting hardening = "high" on
+            # x86_64 today. The "high" tier drags in a
+            # linux-hardened kernel rebuild (FIPS-aware crypto,
+            # kernel lockdown integrity mode, persistent audit) and
+            # there is no substituter pre-warmed for x86_64 →
+            # ~45-60 min compile on a c7a.large with 2 vCPU. The
+            # kindling `harden` step already applies the full
+            # base+hardened+ami-snapshot profile stack in the
+            # provisioner (22 primitives, CIS-L1 aligned), so we
+            # cover hardening at the provisioner layer instead of
+            # at the nixosConfiguration layer.
+            #
+            # Re-enable `hardening = "high"` once an x86_64 attic
+            # substituter is warm and ami-build pipelines can pull
+            # the pre-built linux-hardened kernel closure.
           };
 
           pleme.metrics.useCordel = true;
