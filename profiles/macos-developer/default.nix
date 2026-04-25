@@ -1,6 +1,23 @@
 # profiles/macos-developer/default.nix
 # macOS developer workstation profile.
 #
+# ⚠ NOT auto-imported by Mac nodes in pleme-io/nix.
+#
+# `kindling-profiles.darwinModules.default` exports only
+# `./modules/node-identity.nix` (the schema), NOT this profile file.
+# So setting `kindling.nodeIdentity.profile = "macos-developer"` on a
+# Mac node is metadata only — it does not pull this file into the
+# config. The pleme-io fleet's actual Mac config flow is:
+#
+#   nix/profiles/darwin-developer  →  pleme.darwin.developer (typed module)
+#                                  →  blackmatter.components.sshServer
+#
+# This file is exposed via `lib.profiles.macos-developer` for the
+# `kindling profile show` CLI and for any consumer that wires it up
+# explicitly. If you change config here expecting it to land on cid
+# or ryn, it WON'T — change `nix/modules/pleme/darwin/developer.nix`
+# (or `nix/profiles/darwin-developer/`) instead.
+#
 # Extracted from nix/nodes/cid — generic settings only.
 # All user-specific values come from kindling.nodeIdentity (ni).
 #
