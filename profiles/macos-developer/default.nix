@@ -167,7 +167,15 @@ in {
   environment.systemPackages = [blzsh];
   environment.shells = [blzsh];
 
-  # User account
+  # User account — declared AND actually created by nix-darwin.
+  # `users.knownUsers` is the opt-in list nix-darwin uses to manage
+  # macOS users via dscl/sysadminctl; without it the users.users.<name>
+  # declaration is inert and the user has to be created by hand.
+  # Listing the primary user here makes `darwin-rebuild` create them
+  # on a fresh box (e.g. when the macOS install user differs from the
+  # node's primary user), and is a no-op on machines where the user
+  # already exists with the matching uid.
+  users.knownUsers = [ ni.user.name ];
   users.users.${ni.user.name} = {
     uid = ni.user.uid;
     home = homeDir;
