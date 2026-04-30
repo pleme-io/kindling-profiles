@@ -338,11 +338,18 @@ in {
   blackmatter.security.hardening.enable = lib.mkForce false;
 
   # ── portao-init: one-shot at boot ───────────────────────────────────
+  # ConditionPathExists guards against running during AMI bake, when
+  # /etc/portao/env hasn't been seeded yet (the env file is written by
+  # the launch template's user_data shim on first real boot — see
+  # `Pangea::Architectures::Portao` user_data block). Without this, the
+  # unit would fire during `nixos-rebuild switch` on the AMI builder,
+  # fail (no env, no AWS creds, no EIP), and break activation.
   systemd.services.portao-init = {
     description = "Portao first-boot init: generate keys, claim EIP, render wg conf";
     wantedBy = ["multi-user.target"];
     after = ["network-online.target" "amazon-init.service"];
     wants = ["network-online.target"];
+    unitConfig.ConditionPathExists = "/etc/portao/env";
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
@@ -357,6 +364,7 @@ in {
     description = "Portao spoke registry refresh (SSM → wg syncconf)";
     after = ["portao-init.service"];
     requires = ["portao-init.service"];
+    unitConfig.ConditionPathExists = "/etc/portao/env";
     serviceConfig = {
       Type = "oneshot";
       ExecStart = "${portaoPeerRefresh}/bin/portao-peer-refresh";
@@ -377,6 +385,7 @@ in {
     description = "Portao idle watchdog — scale ASG to 0 if no fresh handshakes";
     after = ["portao-init.service"];
     requires = ["portao-init.service"];
+    unitConfig.ConditionPathExists = "/etc/portao/env";
     serviceConfig = {
       Type = "oneshot";
       ExecStart = "${portaoWatchdog}/bin/portao-watchdog";
