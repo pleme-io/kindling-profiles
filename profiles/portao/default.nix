@@ -31,6 +31,7 @@
   config,
   lib,
   pkgs,
+  modulesPath,
   ...
 }: let
   ni = config.kindling.nodeIdentity;
@@ -233,23 +234,23 @@
   };
 
 in {
-  # ── Blizzard server profile ─────────────────────────────────────────
-  blackmatter.profiles.blizzard = {
-    enable = true;
-    variant = "server";
-  };
+  # ── Amazon AMI base ─────────────────────────────────────────────────
+  # Self-contained profile pattern (mirrors attic-server) — direct
+  # NixOS settings, no blizzard dependency. blizzard's hardware module
+  # declares `swapDevices` + `fileSystems` that don't match the bare EC2
+  # builder's actual disks, breaking `check-mountpoints` during
+  # nixos-rebuild switch. amazon-image.nix already configures the right
+  # filesystems for AWS.
+  imports = ["${modulesPath}/virtualisation/amazon-image.nix"];
 
-  # ── Networking + WireGuard ──────────────────────────────────────────
-  blackmatter.profiles.blizzard.networkingExtended = {
-    hostName = ni.hostname or "portao";
-    useNetworkTopology = false;
-    firewall = {
-      enable = true;
-      allowPing = true;
-      allowedTCPPorts = [22];
-      allowedUDPPorts = [51822];
-      trustedInterfaces = [wgInterface];
-    };
+  # ── Networking + Firewall ───────────────────────────────────────────
+  networking.hostName = ni.hostname or "portao";
+  networking.firewall = {
+    enable = true;
+    allowPing = true;
+    allowedTCPPorts = [22];
+    allowedUDPPorts = [51822];
+    trustedInterfaces = [wgInterface];
   };
 
   # IPv4 forwarding required for the hub to route between spokes.
@@ -258,7 +259,20 @@ in {
     "net.ipv4.conf.all.forwarding" = 1;
   };
 
-  # WireGuard tooling baked into the AMI.
+  # ── Boot tuning ─────────────────────────────────────────────────────
+  boot.loader.timeout = lib.mkDefault 1; # JIT — minimise cold-boot latency
+  boot.loader.grub.configurationLimit = lib.mkDefault 5;
+  boot.initrd.availableKernelModules = ["xhci_pci" "ahci" "nvme" "usbhid" "sd_mod"];
+  boot.kernelParams = [
+    "transparent_hugepage=never"
+    "nmi_watchdog=0"
+    "nowatchdog"
+  ] ++ (ni.hardware.kernel.params or []);
+  boot.blacklistedKernelModules = ["pcspkr"];
+  boot.kernelModules = ni.hardware.kernel.modules or [];
+
+  # ── Packages ────────────────────────────────────────────────────────
+  nixpkgs.config.allowUnfree = true;
   environment.systemPackages = with pkgs; [
     wireguard-tools
     awscli2
@@ -266,14 +280,10 @@ in {
     portaoInit
     portaoPeerRefresh
     portaoWatchdog
+    htop
+    tcpdump
+    iotop
   ];
-
-  # ── Hardware ────────────────────────────────────────────────────────
-  blackmatter.profiles.blizzard.hardware = {
-    cpu.type = ni.hardware.cpu.vendor or "amd";
-    kernel.modules = ni.hardware.kernel.modules or [];
-    platform = ni.hardware.platform or "x86_64-linux";
-  };
 
   # ── SSH (break-glass via SSM Session Manager preferred) ─────────────
   services.openssh = {
@@ -284,42 +294,48 @@ in {
     };
   };
 
-  # ── System tuning (lighter than k3s — VPN concentrator only) ────────
-  # NOTE: blackmatter.profiles.blizzard.optimizations is intentionally
-  # NOT enabled here — it sets `kernel.pid_max = 4194304` without
-  # mkDefault, which conflicts with nixpkgs's matching default in
-  # `nixos/modules/system/boot/systemd.nix`. Portao is a single-process
-  # VPN concentrator; no perf tuning is needed.
-  blackmatter.components.baseSystemTuning = {
-    enable = true;
-    boot = {
-      timeout = 1; # JIT — minimise cold-boot latency
-      configurationLimit = 5;
-      initrdCompress = "lz4";
-    };
-    journald = {
-      storage = "volatile";
-      systemMaxUse = "100M";
-    };
-    systemd = {
-      defaultTimeoutStartSec = "30s";
-      defaultTimeoutStopSec = "20s";
-      waitOnline = false;
-    };
-    nix = {
-      gcAutomatic = false; # AMI is built once; no GC needed
-      optimiseAutomatic = false;
-    };
+  # ── Locale & Time ───────────────────────────────────────────────────
+  time.timeZone = "UTC";
+  i18n.defaultLocale = "en_US.UTF-8";
+
+  # ── System tuning ───────────────────────────────────────────────────
+  services.journald.extraConfig = ''
+    Storage=volatile
+    SystemMaxUse=100M
+  '';
+  systemd.settings.Manager = {
+    DefaultTimeoutStartSec = "30s";
+    DefaultTimeoutStopSec = "20s";
+  };
+  systemd.network.wait-online.enable = lib.mkDefault false;
+
+  # ── Nix ─────────────────────────────────────────────────────────────
+  nix.settings = {
+    trusted-users = ni.nix.trusted_users or ["root"];
+    accept-flake-config = true;
+    experimental-features = ["nix-command" "flakes"];
+    auto-optimise-store = true;
   };
 
-  blackmatter.components.systemTime = {
-    enable = true;
-    timeZone = "UTC";
+  # ── Maintenance ─────────────────────────────────────────────────────
+  services.fstrim.enable = true;
+  services.logrotate.enable = true;
+
+  system.stateVersion = lib.mkDefault "25.11";
+
+  # ── Disable services pulled in by the blackmatter aggregator ────────
+  # (mirrors attic-server pattern — these aren't relevant to a single-
+  # purpose VPN concentrator and add closure weight).
+  services.tor.enable = lib.mkForce false;
+  virtualisation.docker.enable = lib.mkForce false;
+  blackmatter.security.tools = {
+    network.enable = lib.mkForce false;
+    web.enable = lib.mkForce false;
+    osint.enable = lib.mkForce false;
+    passwords.enable = lib.mkForce false;
+    privacy.enable = lib.mkForce false;
   };
-  blackmatter.components.systemLocale = {
-    enable = true;
-    defaultLocale = "en_US.UTF-8";
-  };
+  blackmatter.security.hardening.enable = lib.mkForce false;
 
   # ── portao-init: one-shot at boot ───────────────────────────────────
   systemd.services.portao-init = {
