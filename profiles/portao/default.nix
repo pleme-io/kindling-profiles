@@ -47,7 +47,7 @@
   # so systemd units don't have to know nix store paths.
   portaoInit = pkgs.writeShellApplication {
     name = "portao-init";
-    runtimeInputs = with pkgs; [awscli2 wireguard-tools jq coreutils];
+    runtimeInputs = with pkgs; [awscli2 wireguard-tools jq coreutils curl];
     text = ''
       set -euo pipefail
       # shellcheck source=/dev/null
@@ -88,7 +88,12 @@
 
       # 3) Claim the persistent EIP by Name tag — same EIP across cycles
       #    so vpn.<env>.quero.lol always resolves to the same address.
-      INSTANCE_ID=$(curl -fsSL http://169.254.169.254/latest/meta-data/instance-id)
+      #    The launch template enforces IMDSv2 (http_tokens=required), so we
+      #    PUT for a session token before reading metadata.
+      IMDS_TOKEN=$(curl -fsS -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 60" \
+        http://169.254.169.254/latest/api/token)
+      INSTANCE_ID=$(curl -fsS -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" \
+        http://169.254.169.254/latest/meta-data/instance-id)
       ALLOC_ID=$(aws ec2 describe-addresses \
         --region "$PORTAO_REGION" \
         --filters "Name=tag:Name,Values=$PORTAO_EIP_TAG" \
