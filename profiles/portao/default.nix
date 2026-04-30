@@ -283,12 +283,11 @@ in {
   };
 
   # ── System tuning (lighter than k3s — VPN concentrator only) ────────
-  blackmatter.profiles.blizzard.optimizations = {
-    enable = true;
-    cpuGovernor = "performance";
-    nvme.optimize = false;
-  };
-
+  # NOTE: blackmatter.profiles.blizzard.optimizations is intentionally
+  # NOT enabled here — it sets `kernel.pid_max = 4194304` without
+  # mkDefault, which conflicts with nixpkgs's matching default in
+  # `nixos/modules/system/boot/systemd.nix`. Portao is a single-process
+  # VPN concentrator; no perf tuning is needed.
   blackmatter.components.baseSystemTuning = {
     enable = true;
     boot = {
