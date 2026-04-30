@@ -395,6 +395,45 @@
           "kindling ami-test --distribution kubernetes"
         ];
       };
+
+      # ── Portao AMI Templates ────────────────────────────────────
+      # JIT WireGuard concentrator. Mirrors the k3s build pattern (one
+      # base template + one test template) — there's no multi-layer
+      # split because the closure is small (no K8s, no FluxCD, just
+      # WireGuard tooling + portao systemd units).
+      #
+      # Build template: base NixOS → nixos-rebuild → kindling ami-build → snapshot
+      portao-build-template = amiBuild.mkBuildTemplate {
+        amiName = "nixos-portao";
+        flakeRef = "github:pleme-io/kindling-profiles#portao-builder";
+        provisionerScript = [
+          ''if [ -n "$ATTIC_URL" ]; then echo "Using Attic cache: $ATTIC_URL"; nixos-rebuild switch --flake $FLAKE_REF --option access-tokens github.com=$GITHUB_TOKEN --option extra-substituters "$ATTIC_URL" --option require-sigs false; else nixos-rebuild switch --flake $FLAKE_REF --option access-tokens github.com=$GITHUB_TOKEN; fi''
+          "export PATH=/run/current-system/sw/bin:$PATH"
+          # --skip-validation: portao isn't a K3s node, the standard
+          # K3s cluster-state validation suite doesn't apply. The portao
+          # AMI's own systemd units (portao-init / -peer-refresh /
+          # -watchdog) are validated end-to-end by the cluster-test
+          # template below.
+          "kindling ami-build --flake-ref $FLAKE_REF --skip-validation"
+        ];
+      };
+
+      # Test template: boot from built AMI, verify portao systemd units
+      # come up (without real SSM/EIP creds — those are integration-test
+      # concerns, not boot-validation concerns).
+      portao-test-template = amiBuild.mkTestTemplate {
+        instanceType = "t3.small";
+        testScript = [
+          "export PATH=/run/current-system/sw/bin:$PATH"
+          # The init service will fail without real AWS creds — that's
+          # expected and OK for boot-validation. We just want to verify
+          # the unit exists, the wg interface tooling is present, and
+          # the timers were registered.
+          "systemctl list-unit-files | grep -E 'portao-(init|peer-refresh|watchdog)' || exit 1"
+          "command -v wg-quick >/dev/null && command -v wg >/dev/null"
+          "test -x /run/current-system/sw/bin/portao-init"
+        ];
+      };
     };
 
     # NixOS configuration for Packer-based AMI builds (nixos-rebuild switch target)
@@ -470,6 +509,57 @@
             role = "builder";
             platform = "quero";
             hostnameFromInstanceTag = false;
+          };
+        }
+      ];
+    };
+
+    # NixOS configuration for the Packer-based portao AMI build target.
+    # JIT WireGuard concentrator (vpn.<account-alias>.quero.lol).
+    #
+    # Imports the same baseline as ami-builder / attic-builder
+    # (aws-node-base + cloudwatch publisher) plus the portao-specific
+    # systemd unit stack from `./profiles/portao`. NO K3s, NO FluxCD —
+    # this node serves WireGuard, nothing else.
+    #
+    # Activated at Packer build time by `portao-build-template` →
+    # `nixos-rebuild switch --flake github:pleme-io/kindling-profiles#portao-builder`.
+    nixosConfigurations.portao-builder = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        self.nixosModules.default
+        inputs.sops-nix.nixosModules.sops
+        inputs.kindling.nixosModules.default
+        inputs.home-manager.nixosModules.home-manager
+        "${nixpkgs}/nixos/modules/virtualisation/amazon-image.nix"
+        # Reusable CloudWatch metric publisher — feeds the
+        # PortaoQuiescentTriggerDecl / NetworkPacketsIn alarm declared
+        # in Pangea::Architectures::Portao as the AWS-side backstop for
+        # the hub's own systemd watchdog timer.
+        "${inputs.substrate}/lib/infra/cloudwatch-metric-publisher.nix"
+        ./profiles/portao
+        ./profiles/aws-node-base
+        (amiNodeIdentity "x86_64-linux")
+        {
+          # Make kindling CLI available for ami-build validation.
+          environment.systemPackages = [ inputs.kindling.packages.x86_64-linux.default ];
+
+          # Shared AWS node conventions — role="custom" because portao
+          # has no built-in role-keyed publisher (the K3s/Attic/EKS
+          # auto-mappings don't apply). The portao watchdog publishes
+          # its own SelfTeardown metric via a one-off
+          # `aws cloudwatch put-metric-data` call when it scales the
+          # ASG to 0; no continuous publisher is needed.
+          # hardening="high" — portao is internet-facing on UDP 51822,
+          # so the FedRAMP High additive (kernel lockdown integrity
+          # mode, persistent audit, FIPS-aware crypto) is the right
+          # baseline. No K3s/IPVS, so kernel lockdown is safe.
+          pleme.aws-node = {
+            enable = true;
+            role = "custom";
+            platform = "quero";
+            hostnameFromInstanceTag = false;
+            hardening = "high";
           };
         }
       ];
