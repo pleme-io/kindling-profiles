@@ -56,18 +56,28 @@
       PUB_FILE=/etc/wireguard/${wgInterface}.pub
       CONF_FILE=/etc/wireguard/${wgInterface}.conf
 
-      # 1) Private key — generate if absent (idempotent across reboots
-      # because /etc/wireguard is on the persistent root volume).
+      # 1) Private key — fetch from SSM (SecureString), seeded by
+      # `portao-secrets-bootstrap` on the operator workstation. Kept
+      # in SOPS canonically; SSM is the AMI's read-only delivery
+      # channel. /etc/wireguard is mode 700 on the persistent root
+      # volume so the key survives instance refresh.
+      HUB_PRIV_PARAM="''${PORTAO_HUB_PRIV_PARAM:-/portao/$PORTAO_ENV/hub-private-key}"
       mkdir -p /etc/wireguard
       chmod 700 /etc/wireguard
-      if [ ! -s "$KEY_FILE" ]; then
-        umask 077
-        wg genkey > "$KEY_FILE"
-      fi
+      umask 077
+      aws ssm get-parameter \
+        --region "$PORTAO_REGION" \
+        --name "$HUB_PRIV_PARAM" \
+        --with-decryption \
+        --query 'Parameter.Value' --output text > "$KEY_FILE"
       wg pubkey < "$KEY_FILE" > "$PUB_FILE"
 
-      # 2) Publish the hub public key to SSM so spokes can fetch it
-      #    (cordel portao-wake reads this after waking the ASG).
+      # 2) Publish the hub public key to SSM so the operator's
+      #    `kindling vpn lock-hub-key` (and any future drift detector)
+      #    can verify the deployed AMI is using the expected key.
+      #    Spokes do NOT read this — they have the hub pubkey baked
+      #    into vpn-links.nix at nix-eval time. Drift here is a
+      #    diagnostic, not a runtime concern.
       aws ssm put-parameter \
         --region "$PORTAO_REGION" \
         --name "$PORTAO_HUBKEY_PARAM" \
