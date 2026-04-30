@@ -143,6 +143,7 @@
     runtimeInputs = with pkgs; [awscli2 wireguard-tools jq coreutils];
     text = ''
       set -euo pipefail
+      # shellcheck source=/dev/null
       . /etc/portao/env
 
       CONF_FILE=/etc/wireguard/${wgInterface}.conf
@@ -187,6 +188,7 @@
     runtimeInputs = with pkgs; [awscli2 wireguard-tools coreutils];
     text = ''
       set -euo pipefail
+      # shellcheck source=/dev/null
       . /etc/portao/env
 
       ASG_NAME="''${PORTAO_ASG_NAME:-portao-$PORTAO_ENV-asg}"
