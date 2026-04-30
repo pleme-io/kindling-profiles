@@ -58,17 +58,17 @@
       CONF_FILE=/etc/wireguard/${wgInterface}.conf
 
       # 1) Private key — fetch from SSM (SecureString), seeded by
-      # `portao-secrets-bootstrap` on the operator workstation. Kept
-      # in SOPS canonically; SSM is the AMI's read-only delivery
-      # channel. /etc/wireguard is mode 700 on the persistent root
-      # volume so the key survives instance refresh.
-      HUB_PRIV_PARAM="''${PORTAO_HUB_PRIV_PARAM:-/portao/$PORTAO_ENV/hub-private-key}"
+      # `kindling vpn portao-bootstrap` on the operator workstation.
+      # Kept in SOPS canonically; SSM is the AMI's read-only delivery
+      # channel. Re-fetched on every boot — instance disks are
+      # ephemeral now (no EIP-stable identity), so we don't try to
+      # cache the key locally.
       mkdir -p /etc/wireguard
       chmod 700 /etc/wireguard
       umask 077
       aws ssm get-parameter \
         --region "$PORTAO_REGION" \
-        --name "$HUB_PRIV_PARAM" \
+        --name "$PORTAO_HUB_PRIV_PARAM" \
         --with-decryption \
         --query 'Parameter.Value' --output text > "$KEY_FILE"
       wg pubkey < "$KEY_FILE" > "$PUB_FILE"
@@ -86,27 +86,26 @@
         --overwrite \
         --value "$(cat "$PUB_FILE")"
 
-      # 3) Claim the persistent EIP by Name tag — same EIP across cycles
-      #    so vpn.<env>.quero.lol always resolves to the same address.
-      #    The launch template enforces IMDSv2 (http_tokens=required), so we
-      #    PUT for a session token before reading metadata.
+      # 3) Publish DNS — read this instance's auto-assigned public IP
+      #    via IMDSv2 + UPSERT the A record at PORTAO_DNS_NAME so spokes
+      #    resolve us at handshake time. No EIP — idle cost is $0; the
+      #    operator-facing DNS name is the stable contract instead.
       IMDS_TOKEN=$(curl -fsS -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 60" \
         http://169.254.169.254/latest/api/token)
-      INSTANCE_ID=$(curl -fsS -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" \
-        http://169.254.169.254/latest/meta-data/instance-id)
-      ALLOC_ID=$(aws ec2 describe-addresses \
-        --region "$PORTAO_REGION" \
-        --filters "Name=tag:Name,Values=$PORTAO_EIP_TAG" \
-        --query 'Addresses[0].AllocationId' --output text)
-      if [ -z "$ALLOC_ID" ] || [ "$ALLOC_ID" = "None" ]; then
-        echo "portao-init: no EIP found tagged Name=$PORTAO_EIP_TAG — aborting" >&2
+      PUBLIC_IP=$(curl -fsS -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" \
+        http://169.254.169.254/latest/meta-data/public-ipv4)
+      if [ -z "$PUBLIC_IP" ]; then
+        echo "portao-init: no public IPv4 on this instance — aborting" >&2
         exit 1
       fi
-      aws ec2 associate-address \
-        --region "$PORTAO_REGION" \
-        --instance-id "$INSTANCE_ID" \
-        --allocation-id "$ALLOC_ID" \
-        --allow-reassociation
+      CHANGE_BATCH=$(jq -nc \
+        --arg name "$PORTAO_DNS_NAME" \
+        --arg ip "$PUBLIC_IP" \
+        '{Changes:[{Action:"UPSERT",ResourceRecordSet:{Name:$name,Type:"A",TTL:60,ResourceRecords:[{Value:$ip}]}}]}')
+      aws route53 change-resource-record-sets \
+        --hosted-zone-id "$PORTAO_HOSTED_ZONE_ID" \
+        --change-batch "$CHANGE_BATCH" >/dev/null
+      echo "portao-init: upserted $PORTAO_DNS_NAME → $PUBLIC_IP"
 
       # 4) Render config from peer list. Hub address derives from the
       #    spoke subnet's .254 by convention (matches vpn-links.nix).
