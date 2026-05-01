@@ -12,8 +12,8 @@
 ;; into VPC routing yet).
 ;;
 ;; Idempotent: each rule is `iptables -C` (check) before `iptables -A`
-;; (append). Re-running the unit on a peer-refresh / replacement boot
-;; doesn't duplicate rules.
+;; (append). Re-running on a peer-refresh / replacement boot doesn't
+;; duplicate.
 ;;
 ;; Invoked by portao-nat.service:
 ;;   After=portao-init.service
@@ -30,29 +30,29 @@
 (define env-file "/etc/portao/env")
 (define vpn-subnet "10.100.30.0/24")
 
-;; ── Parse /etc/portao/env into an alist ─────────────────────────────
+;; ── Parse /etc/portao/env into an alist of (key value) pairs ────────
 ;; Format is a series of `KEY=VALUE` lines (POSIX shell .env shape).
-;; We don't try to interpret quoting / escapes — pangea writes raw
-;; values, so KEY=value pairs are unambiguous.
+;; Pairs are `(list k v)` so `(car p)` is the key and `(car (cdr p))`
+;; is the value — a 2-element list rather than a cons cell, which
+;; matches how `cons` ends up rendering anyway and avoids quirks of
+;; cdr-on-pair returning a 1-element list. Empty / comment lines map
+;; to `(list)`; `concat` flattens so `env-pairs` is a flat list.
 (define (parse-env-line line)
   (let ((trimmed (string-trim line)))
-    (if (or (= 0 (string-length trimmed))
-            (string-starts-with? trimmed "#"))
-        #f
-        (let ((idx (re-find "^([A-Za-z_][A-Za-z0-9_]*)=(.*)$" trimmed)))
-          (if idx
-              (let ((caps (re-captures "^([A-Za-z_][A-Za-z0-9_]*)=(.*)$" trimmed)))
-                (cons (car (cdr caps)) (car (cdr (cdr caps)))))
-              #f)))))
+    (if (or (= 0 (string-length trimmed)) (string-starts-with? trimmed "#"))
+        (list)
+        (let ((caps (re-captures "^([A-Za-z_][A-Za-z0-9_]*)=(.*)$" trimmed)))
+          (if caps
+              (list (list (car (cdr caps)) (car (cdr (cdr caps)))))
+              (list))))))
 
-(define raw-env (read-file env-file))
 (define env-pairs
-  (filter (fn (p) p)
-    (map parse-env-line (string-split raw-env "\n"))))
+  (foldl append (list)
+    (map parse-env-line (string-split (read-file env-file) "\n"))))
 
 (define (env-lookup key default)
   (let ((found (filter (fn (p) (eq? (car p) key)) env-pairs)))
-    (if (empty? found) default (cdr (car found)))))
+    (if (nil? found) default (car (cdr (car found))))))
 
 (define cidrs-raw (env-lookup "PORTAO_ADVERTISE_CIDRS" ""))
 
@@ -108,6 +108,6 @@
                                         (alist-get add :stderr)))
               (exit 1))))))
 
-(map ensure-masquerade-rule cidrs)
+(for-each ensure-masquerade-rule cidrs)
 
 (log-info "portao-nat: all MASQUERADE rules installed")
