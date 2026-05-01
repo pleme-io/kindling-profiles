@@ -43,6 +43,17 @@
   # is a separate backstop with a different (typically larger) window.
   idleThresholdSecs = 900;
 
+  # Cold-start grace period: when the instance has just woken, no spoke
+  # has had time to handshake yet. Without this grace, the watchdog fires
+  # at OnBootSec=5min and scales the ASG back to 0 BEFORE the spoke that
+  # triggered the wake even completes its first handshake — kicking off
+  # an instance churn loop. The cordel portao-wake op typically takes
+  # 60-120s end-to-end (ASG scale + EC2 boot + portao-init), so 15 min
+  # of grace gives the operator's wg-quick PreUp + handshake comfortable
+  # margin even on a slow link or tight SSO refresh path. The watchdog
+  # uses /proc/uptime to gate this — no external timer state.
+  coldStartGraceSecs = 900;
+
   # Scripts compiled into the AMI — live in /run/current-system/sw/bin
   # so systemd units don't have to know nix store paths.
   portaoInit = pkgs.writeShellApplication {
@@ -199,6 +210,19 @@
       ASG_NAME="''${PORTAO_ASG_NAME:-portao-$PORTAO_ENV-asg}"
       NOW=$(date +%s)
       MAX_AGE=${toString idleThresholdSecs}
+      GRACE=${toString coldStartGraceSecs}
+
+      # Cold-start grace: when the instance has just been woken by a
+      # spoke's `cordel portao-wake`, the spoke's handshake hasn't had
+      # time to land yet. Honoring scaledown inside the grace window
+      # would terminate the instance the spoke is actively trying to
+      # reach, kicking off a churn loop. /proc/uptime is monotonic and
+      # local — no external state needed.
+      UPTIME=$(awk '{print int($1)}' /proc/uptime)
+      if [ "$UPTIME" -lt "$GRACE" ]; then
+        echo "portao-watchdog: cold-start grace ($UPTIME < $GRACE) — skipping scaledown"
+        exit 0
+      fi
 
       # No peers configured yet → not idle, just bootstrapping.
       if ! wg show ${wgInterface} latest-handshakes 2>/dev/null | grep -q .; then
@@ -341,17 +365,68 @@ in {
   };
   blackmatter.security.hardening.enable = lib.mkForce false;
 
+  # ── portao-userdata: fetch + execute EC2 user_data on first boot ────
+  # The NixOS amazon-image module ships an `amazon-init.service` that's
+  # supposed to fetch user_data from IMDSv2 and execute it, but its
+  # current upstream wiring (`After=multi-user.target`) makes it a no-op
+  # in practice — the unit reaches "ready" without firing the script,
+  # so /etc/portao/env never gets written.
+  #
+  # Owning the contract directly avoids that dependency: this unit
+  # explicitly fetches user_data via IMDSv2 and runs it before
+  # portao-init. ConditionPathExists guards against re-running on
+  # subsequent boots (user_data already executed) and during AMI bake
+  # (no IMDSv2 endpoint).
+  systemd.services.portao-userdata = {
+    description = "Portao userdata: fetch EC2 user_data via IMDSv2 and seed /etc/portao/env";
+    wantedBy = ["multi-user.target"];
+    after = ["network-online.target"];
+    wants = ["network-online.target"];
+    # Don't re-run on subsequent boots — portao-init's env file is the
+    # marker that this unit already fired successfully. (RemainAfterExit
+    # alone isn't enough: a boot-after-stop would trigger the unit again
+    # and overwrite a possibly-edited env file.)
+    unitConfig.ConditionPathExists = "!/etc/portao/env";
+    path = [pkgs.curl pkgs.coreutils];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      StandardOutput = "journal";
+      StandardError = "journal";
+    };
+    script = ''
+      set -euo pipefail
+      mkdir -p /etc/portao
+
+      # IMDSv2 token (60s TTL is plenty — we only need one call).
+      TOKEN=$(curl -sf -X PUT \
+        -H "X-aws-ec2-metadata-token-ttl-seconds: 60" \
+        http://169.254.169.254/latest/api/token)
+
+      # Fetch user_data (404 = no userdata attached, which is fatal —
+      # there's no fallback shape; an unconfigured portao instance is
+      # useless).
+      USERDATA=$(curl -sf \
+        -H "X-aws-ec2-metadata-token: $TOKEN" \
+        http://169.254.169.254/latest/user-data)
+
+      # Execute under sh — the launch_template user_data is a shell
+      # script that writes /etc/portao/env. Trust comes from IMDSv2
+      # being instance-local + IAM-gated (the LT user_data is set by
+      # pangea, not user-controllable).
+      printf '%s\n' "$USERDATA" | sh
+    '';
+  };
+
   # ── portao-init: one-shot at boot ───────────────────────────────────
-  # ConditionPathExists guards against running during AMI bake, when
-  # /etc/portao/env hasn't been seeded yet (the env file is written by
-  # the launch template's user_data shim on first real boot — see
-  # `Pangea::Architectures::Portao` user_data block). Without this, the
-  # unit would fire during `nixos-rebuild switch` on the AMI builder,
-  # fail (no env, no AWS creds, no EIP), and break activation.
+  # Depends on portao-userdata so /etc/portao/env exists before this
+  # unit reads it. ConditionPathExists is a defensive belt-and-suspenders
+  # in case portao-userdata is masked / skipped / fails open.
   systemd.services.portao-init = {
     description = "Portao first-boot init: generate keys, claim EIP, render wg conf";
     wantedBy = ["multi-user.target"];
-    after = ["network-online.target" "amazon-init.service"];
+    after = ["network-online.target" "portao-userdata.service"];
+    requires = ["portao-userdata.service"];
     wants = ["network-online.target"];
     unitConfig.ConditionPathExists = "/etc/portao/env";
     serviceConfig = {
