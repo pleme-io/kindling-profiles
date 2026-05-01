@@ -429,19 +429,26 @@
       };
 
       # Test template: boot from built AMI, verify portao systemd units
-      # come up (without real SSM/EIP creds — those are integration-test
-      # concerns, not boot-validation concerns).
+      # come up (without real SSM/AWS creds — those are integration-test
+      # concerns, not boot-validation concerns). The lifecycle scripts
+      # are tatara-lisp invoked via the systemd unit's ExecStart, not
+      # binaries in /run/current-system/sw/bin — so we assert unit
+      # presence + interpreter availability instead of binary paths.
       portao-test-template = amiBuild.mkTestTemplate {
         instanceType = "t3.small";
         testScript = [
           "export PATH=/run/current-system/sw/bin:$PATH"
-          # The init service will fail without real AWS creds — that's
-          # expected and OK for boot-validation. We just want to verify
-          # the unit exists, the wg interface tooling is present, and
-          # the timers were registered.
-          "systemctl list-unit-files | grep -E 'portao-(init|peer-refresh|watchdog)' || exit 1"
+          # Verify the new tatara-lisp lifecycle units landed. The
+          # `metric` unit replaces the deleted watchdog — the control
+          # loop now lives in AWS as a CloudWatch alarm + ASG
+          # SimpleScaling policy declared by Pangea::Architectures::Portao.
+          "systemctl list-unit-files | grep -E 'portao-(init|peer-refresh|metric)\\.service' || exit 1"
+          "systemctl list-unit-files | grep -E 'portao-(peer-refresh|metric)\\.timer' || exit 1"
+          # WireGuard tooling is a runtime dep of every lifecycle script.
           "command -v wg-quick >/dev/null && command -v wg >/dev/null"
-          "test -x /run/current-system/sw/bin/portao-init"
+          # Tatara-script is the interpreter. Absence here = bake
+          # picked up a stale kindling-profiles pin.
+          "command -v tatara-script >/dev/null"
         ];
       };
     };
