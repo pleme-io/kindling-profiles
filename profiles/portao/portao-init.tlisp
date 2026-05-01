@@ -1,0 +1,217 @@
+;; portao-init.tlisp
+;;
+;; First-boot bring-up for the portao JIT WireGuard concentrator.
+;;
+;; Replaces the previous shell `portao-init` (which had implicit PATH
+;; dependencies on every binary it called — exactly the failure class
+;; that bit `portao-watchdog` with awk:command-not-found). Tatara-script
+;; ships one cohesive runtime; the only externally-resolved binaries
+;; are the ones we explicitly hand to `exec-capture`, and they're listed
+;; in the systemd unit's `path =` so they fail at build time if missing.
+;;
+;; Cloud-init contract (provided by Pangea's LT user_data, materialized
+;; into /etc/portao/env by portao-userdata.service):
+;;   PORTAO_ENV               — env alias (e.g. akeyless-staging-use2)
+;;   PORTAO_REGION            — AWS region
+;;   PORTAO_HUB_PRIV_PARAM    — SSM SecureString path for hub WG privkey
+;;   PORTAO_HUBKEY_PARAM      — SSM String path for hub WG pubkey (drift)
+;;   PORTAO_PEERS_PARAM       — SSM SecureString path for peers.json
+;;   PORTAO_HOSTED_ZONE_ID    — Route53 zone for the DNS A record
+;;   PORTAO_DNS_NAME          — public DNS name spokes resolve
+;;   PORTAO_WG_PORT           — UDP listen port (default 51822)
+;;
+;; First-boot flow:
+;;   1. Generate /etc/wireguard/portao0.key from SSM (hub WG privkey).
+;;   2. Derive pubkey, push to SSM (drift detection — spokes don't read).
+;;   3. Fetch IMDSv2 public IPv4, UPSERT Route53 A record at PORTAO_DNS_NAME.
+;;   4. Render /etc/wireguard/portao0.conf from peers.json.
+;;   5. wg-quick up portao0.
+
+(define env-file "/etc/portao/env")
+(define wg-iface "portao0")
+(define key-file "/etc/wireguard/portao0.key")
+(define pub-file "/etc/wireguard/portao0.pub")
+(define conf-file "/etc/wireguard/portao0.conf")
+(define imds-base "http://169.254.169.254/latest")
+
+;; ── Parse /etc/portao/env into an alist of [key value] ──────────────
+;; Same shape as portao-nat.tlisp — keep them aligned so any future
+;; refactor of either touches one parser.
+(define (parse-env-line line)
+  (let ((trimmed (string-trim line)))
+    (if (or (= 0 (string-length trimmed)) (string-starts-with? trimmed "#"))
+        (list)
+        (let ((caps (re-captures "^([A-Za-z_][A-Za-z0-9_]*)=(.*)$" trimmed)))
+          (if caps
+              (list (list (car (cdr caps)) (car (cdr (cdr caps)))))
+              (list))))))
+
+(define env-pairs
+  (foldl append (list)
+    (map parse-env-line (string-split (read-file env-file) "\n"))))
+
+(define (env-lookup key default)
+  (let ((found (filter (fn (p) (eq? (car p) key)) env-pairs)))
+    (if (nil? found) default (car (cdr (car found))))))
+
+(define (env-required key)
+  (let ((v (env-lookup key "")))
+    (if (= 0 (string-length v))
+        (begin
+          (log-error (string-format "portao-init: missing required env var: {}" key))
+          (exit 2))
+        v)))
+
+(define portao-env       (env-required "PORTAO_ENV"))
+(define region           (env-required "PORTAO_REGION"))
+(define hub-priv-param   (env-required "PORTAO_HUB_PRIV_PARAM"))
+(define hubkey-param     (env-required "PORTAO_HUBKEY_PARAM"))
+(define peers-param      (env-required "PORTAO_PEERS_PARAM"))
+(define hosted-zone-id   (env-required "PORTAO_HOSTED_ZONE_ID"))
+(define dns-name         (env-required "PORTAO_DNS_NAME"))
+(define listen-port      (env-lookup  "PORTAO_WG_PORT" "51822"))
+
+(log-info (string-format "portao-init: env={} region={} dns={}" portao-env region dns-name))
+
+;; ── 1) Hub private key → /etc/wireguard/portao0.key ──────────────────
+(mkdir-p "/etc/wireguard")
+(define priv-result
+  (exec-capture "aws" "ssm" "get-parameter"
+                "--region" region
+                "--name" hub-priv-param
+                "--with-decryption"
+                "--query" "Parameter.Value"
+                "--output" "text"))
+(when (not (= 0 (alist-get priv-result :status)))
+  (log-error (string-format "portao-init: SSM get-parameter {} failed: {}"
+                            hub-priv-param (alist-get priv-result :stderr)))
+  (exit 1))
+(write-file key-file (string-trim (alist-get priv-result :stdout)))
+(exec-capture "chmod" "600" key-file)
+
+;; ── 2) Public key → SSM (drift detection only) ───────────────────────
+(define pub-result (exec-capture "wg" "pubkey" key-file))
+(when (not (= 0 (alist-get pub-result :status)))
+  (log-error "portao-init: wg pubkey failed")
+  (exit 1))
+;; wg pubkey reads from stdin, not a file argument. Use a pipeline via
+;; bash since exec-capture doesn't compose pipes typed-stdin. Three
+;; lines, well below the 3-line glue threshold.
+(define pubkey
+  (string-trim
+    (alist-get
+      (exec-capture "bash" "-c" (string-format "wg pubkey < {}" key-file))
+      :stdout)))
+
+(write-file pub-file pubkey)
+(define put-pub-result
+  (exec-capture "aws" "ssm" "put-parameter"
+                "--region" region
+                "--name" hubkey-param
+                "--type" "String"
+                "--overwrite"
+                "--value" pubkey))
+(when (not (= 0 (alist-get put-pub-result :status)))
+  (log-warn (string-format "portao-init: SSM put-parameter {} failed (continuing): {}"
+                           hubkey-param (alist-get put-pub-result :stderr))))
+
+;; ── 3) IMDSv2 public IPv4 → Route53 UPSERT ───────────────────────────
+(define token-result
+  (exec-capture "curl" "-sf" "-m" "5" "-X" "PUT"
+                "-H" "X-aws-ec2-metadata-token-ttl-seconds: 60"
+                (string-append imds-base "/api/token")))
+(when (not (= 0 (alist-get token-result :status)))
+  (log-error (string-format "portao-init: IMDSv2 token unavailable (curl exit {})"
+                            (alist-get token-result :status)))
+  (exit 1))
+(define imds-token (string-trim (alist-get token-result :stdout)))
+
+(define ip-result
+  (exec-capture "curl" "-sf" "-m" "5"
+                "-H" (string-append "X-aws-ec2-metadata-token: " imds-token)
+                (string-append imds-base "/meta-data/public-ipv4")))
+(when (not (= 0 (alist-get ip-result :status)))
+  (log-error "portao-init: failed to fetch public IPv4 from IMDS")
+  (exit 1))
+(define public-ip (string-trim (alist-get ip-result :stdout)))
+(when (= 0 (string-length public-ip))
+  (log-error "portao-init: no public IPv4 on this instance — aborting")
+  (exit 1))
+
+(define change-batch
+  (string-format
+    "{\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"{}\",\"Type\":\"A\",\"TTL\":60,\"ResourceRecords\":[{\"Value\":\"{}\"}]}}]}"
+    dns-name public-ip))
+
+(define dns-result
+  (exec-capture "aws" "route53" "change-resource-record-sets"
+                "--hosted-zone-id" hosted-zone-id
+                "--change-batch" change-batch))
+(when (not (= 0 (alist-get dns-result :status)))
+  (log-error (string-format "portao-init: Route53 UPSERT failed: {}"
+                            (alist-get dns-result :stderr)))
+  (exit 1))
+(log-info (string-format "portao-init: upserted {} → {}" dns-name public-ip))
+
+;; ── 4) Render WG config from peers.json ──────────────────────────────
+(define peers-result
+  (exec-capture "aws" "ssm" "get-parameter"
+                "--region" region
+                "--name" peers-param
+                "--with-decryption"
+                "--query" "Parameter.Value"
+                "--output" "text"))
+(when (not (= 0 (alist-get peers-result :status)))
+  (log-error (string-format "portao-init: SSM get-parameter {} failed: {}"
+                            peers-param (alist-get peers-result :stderr)))
+  (exit 1))
+(define peers-json (alist-get peers-result :stdout))
+
+;; The config rendering is structurally a JSON-driven template. We
+;; shell out to `jq` for the per-peer expansion (single typed call,
+;; not a pipeline) and assemble the final file in tatara-lisp.
+(define jq-template
+  "\"[Peer]\\n# spoke: \" + .name + \"\\nPublicKey = \" + .public_key + \"\\n\" + (if .psk then (\"PresharedKey = \" + .psk + \"\\n\") else \"\" end) + \"AllowedIPs = \" + .address + \"\\n\"")
+(define hub-address-default "10.100.30.254/24")
+(define hub-addr-result
+  (exec-capture "bash" "-c"
+    (string-format "echo {} | jq -r '.hub_address // \"{}\"'"
+                   (string-format "'{}'" peers-json)
+                   hub-address-default)))
+(define hub-address
+  (string-trim (alist-get hub-addr-result :stdout)))
+
+(define peers-block-result
+  (exec-capture "bash" "-c"
+    (string-format "echo {} | jq -r '.peers[] | {}'"
+                   (string-format "'{}'" peers-json)
+                   jq-template)))
+(when (not (= 0 (alist-get peers-block-result :status)))
+  (log-error "portao-init: jq failed to render peers block")
+  (exit 1))
+(define peers-block (alist-get peers-block-result :stdout))
+
+(define conf-text
+  (string-format
+    "[Interface]\nPrivateKey = {}\nAddress = {}\nListenPort = {}\nMTU = 1380\nTable = off  # portao routes are managed by sysctl IPv4 forwarding + per-spoke AllowedIPs\n\n{}"
+    (string-trim (read-file key-file))
+    hub-address
+    listen-port
+    peers-block))
+
+(write-file conf-file conf-text)
+(exec-capture "chmod" "600" conf-file)
+
+;; ── 5) Bring up the interface ───────────────────────────────────────
+(define link-check (exec-capture "ip" "link" "show" wg-iface))
+(if (= 0 (alist-get link-check :status))
+    (log-info (string-format "portao-init: {} already up" wg-iface))
+    (begin
+      (define up-result (exec-capture "wg-quick" "up" wg-iface))
+      (when (not (= 0 (alist-get up-result :status)))
+        (log-error (string-format "portao-init: wg-quick up failed: {}"
+                                  (alist-get up-result :stderr)))
+        (exit 1))
+      (log-info (string-format "portao-init: {} brought up" wg-iface))))
+
+(log-info "portao-init: complete")

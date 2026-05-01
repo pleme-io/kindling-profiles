@@ -1,0 +1,109 @@
+;; portao-peer-refresh.tlisp
+;;
+;; Pull the spoke registry from SSM every minute and hot-reload the
+;; WireGuard interface if anything changed. `wg syncconf` rotates peers
+;; without dropping the interface, so existing handshakes survive.
+;;
+;; Replaces the previous shell `portao-peer-refresh`. Same rationale as
+;; portao-init: typed runtime, no PATH composition fragility, errors
+;; surface as structured exit codes.
+;;
+;; Invoked by portao-peer-refresh.timer (OnUnitActiveSec=60s).
+
+(define env-file "/etc/portao/env")
+(define wg-iface "portao0")
+(define key-file "/etc/wireguard/portao0.key")
+(define conf-file "/etc/wireguard/portao0.conf")
+
+(define (parse-env-line line)
+  (let ((trimmed (string-trim line)))
+    (if (or (= 0 (string-length trimmed)) (string-starts-with? trimmed "#"))
+        (list)
+        (let ((caps (re-captures "^([A-Za-z_][A-Za-z0-9_]*)=(.*)$" trimmed)))
+          (if caps
+              (list (list (car (cdr caps)) (car (cdr (cdr caps)))))
+              (list))))))
+
+(define env-pairs
+  (foldl append (list)
+    (map parse-env-line (string-split (read-file env-file) "\n"))))
+
+(define (env-lookup key default)
+  (let ((found (filter (fn (p) (eq? (car p) key)) env-pairs)))
+    (if (nil? found) default (car (cdr (car found))))))
+
+(define region      (env-lookup "PORTAO_REGION" ""))
+(define peers-param (env-lookup "PORTAO_PEERS_PARAM" ""))
+(define listen-port (env-lookup "PORTAO_WG_PORT" "51822"))
+
+(when (or (= 0 (string-length region)) (= 0 (string-length peers-param)))
+  (log-error "portao-peer-refresh: PORTAO_REGION or PORTAO_PEERS_PARAM missing")
+  (exit 2))
+
+;; ── Fetch peers.json from SSM ───────────────────────────────────────
+(define peers-result
+  (exec-capture "aws" "ssm" "get-parameter"
+                "--region" region
+                "--name" peers-param
+                "--with-decryption"
+                "--query" "Parameter.Value"
+                "--output" "text"))
+(when (not (= 0 (alist-get peers-result :status)))
+  (log-error (string-format "portao-peer-refresh: SSM get failed: {}"
+                            (alist-get peers-result :stderr)))
+  (exit 1))
+(define peers-json (alist-get peers-result :stdout))
+
+;; ── Render to a tmp file ────────────────────────────────────────────
+(define jq-template
+  "\"[Peer]\\n# spoke: \" + .name + \"\\nPublicKey = \" + .public_key + \"\\n\" + (if .psk then (\"PresharedKey = \" + .psk + \"\\n\") else \"\" end) + \"AllowedIPs = \" + .address + \"\\n\"")
+
+(define hub-addr-result
+  (exec-capture "bash" "-c"
+    (string-format "echo {} | jq -r '.hub_address // \"10.100.30.254/24\"'"
+                   (string-format "'{}'" peers-json))))
+(define hub-address (string-trim (alist-get hub-addr-result :stdout)))
+
+(define peers-block-result
+  (exec-capture "bash" "-c"
+    (string-format "echo {} | jq -r '.peers[] | {}'"
+                   (string-format "'{}'" peers-json)
+                   jq-template)))
+(when (not (= 0 (alist-get peers-block-result :status)))
+  (log-error "portao-peer-refresh: jq failed")
+  (exit 1))
+
+(define new-conf
+  (string-format
+    "[Interface]\nPrivateKey = {}\nAddress = {}\nListenPort = {}\nMTU = 1380\n\n{}"
+    (string-trim (read-file key-file))
+    hub-address
+    listen-port
+    (alist-get peers-block-result :stdout)))
+
+(define tmp-path (tmp-file))
+(write-file tmp-path new-conf)
+
+;; ── Diff against current; reload only if changed ────────────────────
+(define current-conf (if (is-file? conf-file) (read-file conf-file) ""))
+
+(if (eq? current-conf new-conf)
+    (begin
+      (rm tmp-path)
+      (log-info "portao-peer-refresh: no change"))
+    (begin
+      (exec-capture "install" "-m" "600" tmp-path conf-file)
+      (rm tmp-path)
+      ;; wg syncconf reloads peers without dropping the interface.
+      ;; `wg-quick strip` produces the clean wg-format from a wg-quick
+      ;; config; we feed that to wg syncconf via process substitution
+      ;; (bash glue, single typed line — well within the 3-line rule).
+      (define sync-result
+        (exec-capture "bash" "-c"
+          (string-format "wg syncconf {} <(wg-quick strip {})" wg-iface conf-file)))
+      (if (= 0 (alist-get sync-result :status))
+          (log-info "portao-peer-refresh: hot-reloaded peers")
+          (begin
+            (log-error (string-format "portao-peer-refresh: wg syncconf failed: {}"
+                                      (alist-get sync-result :stderr)))
+            (exit 1)))))

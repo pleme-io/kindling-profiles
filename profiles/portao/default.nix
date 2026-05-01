@@ -10,23 +10,25 @@
 # bring-up cycle from connect → handshake completes in ~60-90s.
 #
 # Cloud-init contract (written by the launch template's user_data shim):
-#   /etc/portao/env  →  PORTAO_ENV, PORTAO_REGION, PORTAO_EIP_TAG,
-#                       PORTAO_PEERS_PARAM, PORTAO_HUBKEY_PARAM,
-#                       PORTAO_WG_PORT
+#   /etc/portao/env  →  PORTAO_ENV, PORTAO_REGION,
+#                       PORTAO_HUB_PRIV_PARAM, PORTAO_HUBKEY_PARAM,
+#                       PORTAO_PEERS_PARAM, PORTAO_HOSTED_ZONE_ID,
+#                       PORTAO_DNS_NAME, PORTAO_WG_PORT
 #
-# First-boot flow (portao-init.service):
-#   1. Generate /etc/wireguard/portao0.key if missing (private key)
-#   2. Derive public key, ssm:PutParameter to PORTAO_HUBKEY_PARAM
-#   3. ec2:AssociateAddress to claim the persistent EIP by tag
-#   4. Render /etc/wireguard/portao0.conf from PORTAO_PEERS_PARAM
-#   5. Bring up wg-quick@portao0
+# All in-instance lifecycle scripts are tatara-lisp:
+#   portao-userdata.tlisp   — IMDSv2 + user_data → /etc/portao/env
+#   portao-init.tlisp       — first-boot bring-up (keys, DNS, wg-quick)
+#   portao-peer-refresh.tlisp — 60s SSM-driven peer hot-reload
+#   portao-nat.tlisp        — iptables MASQUERADE for advertised CIDRs
+#   portao-metric.tlisp     — publish HandshakeAge metric to CloudWatch
 #
-# Steady state (portao-peer-refresh.timer, every 60s):
-#   - Re-fetch PORTAO_PEERS_PARAM, diff vs current, hot-reload via `wg syncconf`
-#
-# Teardown (portao-watchdog.timer, every 5min):
-#   - `wg show portao0 latest-handshakes`; if all peers idle > IDLE_THRESHOLD,
-#     `aws autoscaling set-desired-capacity --desired-capacity 0`
+# The control loop ("scale ASG to 0 when handshake idle") used to live
+# on the instance as a shell watchdog. It now lives in AWS as a
+# CloudWatch alarm + ASG SimpleScaling policy declared by
+# `Pangea::Architectures::Portao`. The instance only emits the metric;
+# the alarm decides when to drain. This means the instance can't stop
+# itself from being drained — the 17-hour silent drift bug we hit with
+# the awk-not-found shell watchdog is impossible by construction.
 {
   config,
   lib,
@@ -38,242 +40,21 @@
 
   wgInterface = "portao0";
 
-  # Idle threshold: 15 min of no handshake → scale to 0.
-  # The AWS-side CloudWatch alarm (created by Pangea::Architectures::Portao)
-  # is a separate backstop with a different (typically larger) window.
-  idleThresholdSecs = 900;
-
-  # Cold-start grace period: when the instance has just woken, no spoke
-  # has had time to handshake yet. Without this grace, the watchdog fires
-  # at OnBootSec=5min and scales the ASG back to 0 BEFORE the spoke that
-  # triggered the wake even completes its first handshake — kicking off
-  # an instance churn loop. The cordel portao-wake op typically takes
-  # 60-120s end-to-end (ASG scale + EC2 boot + portao-init), so 15 min
-  # of grace gives the operator's wg-quick PreUp + handshake comfortable
-  # margin even on a slow link or tight SSO refresh path. The watchdog
-  # uses /proc/uptime to gate this — no external timer state.
-  coldStartGraceSecs = 900;
-
-  # Scripts compiled into the AMI — live in /run/current-system/sw/bin
-  # so systemd units don't have to know nix store paths.
-  portaoInit = pkgs.writeShellApplication {
-    name = "portao-init";
-    runtimeInputs = with pkgs; [awscli2 wireguard-tools jq coreutils curl];
-    text = ''
-      set -euo pipefail
-      # shellcheck source=/dev/null
-      . /etc/portao/env
-
-      KEY_FILE=/etc/wireguard/${wgInterface}.key
-      PUB_FILE=/etc/wireguard/${wgInterface}.pub
-      CONF_FILE=/etc/wireguard/${wgInterface}.conf
-
-      # 1) Private key — fetch from SSM (SecureString), seeded by
-      # `kindling vpn portao-bootstrap` on the operator workstation.
-      # Kept in SOPS canonically; SSM is the AMI's read-only delivery
-      # channel. Re-fetched on every boot — instance disks are
-      # ephemeral now (no EIP-stable identity), so we don't try to
-      # cache the key locally.
-      mkdir -p /etc/wireguard
-      chmod 700 /etc/wireguard
-      umask 077
-      aws ssm get-parameter \
-        --region "$PORTAO_REGION" \
-        --name "$PORTAO_HUB_PRIV_PARAM" \
-        --with-decryption \
-        --query 'Parameter.Value' --output text > "$KEY_FILE"
-      wg pubkey < "$KEY_FILE" > "$PUB_FILE"
-
-      # 2) Publish the hub public key to SSM so the operator's
-      #    `kindling vpn lock-hub-key` (and any future drift detector)
-      #    can verify the deployed AMI is using the expected key.
-      #    Spokes do NOT read this — they have the hub pubkey baked
-      #    into vpn-links.nix at nix-eval time. Drift here is a
-      #    diagnostic, not a runtime concern.
-      aws ssm put-parameter \
-        --region "$PORTAO_REGION" \
-        --name "$PORTAO_HUBKEY_PARAM" \
-        --type String \
-        --overwrite \
-        --value "$(cat "$PUB_FILE")"
-
-      # 3) Publish DNS — read this instance's auto-assigned public IP
-      #    via IMDSv2 + UPSERT the A record at PORTAO_DNS_NAME so spokes
-      #    resolve us at handshake time. No EIP — idle cost is $0; the
-      #    operator-facing DNS name is the stable contract instead.
-      IMDS_TOKEN=$(curl -fsS -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 60" \
-        http://169.254.169.254/latest/api/token)
-      PUBLIC_IP=$(curl -fsS -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" \
-        http://169.254.169.254/latest/meta-data/public-ipv4)
-      if [ -z "$PUBLIC_IP" ]; then
-        echo "portao-init: no public IPv4 on this instance — aborting" >&2
-        exit 1
-      fi
-      CHANGE_BATCH=$(jq -nc \
-        --arg name "$PORTAO_DNS_NAME" \
-        --arg ip "$PUBLIC_IP" \
-        '{Changes:[{Action:"UPSERT",ResourceRecordSet:{Name:$name,Type:"A",TTL:60,ResourceRecords:[{Value:$ip}]}}]}')
-      aws route53 change-resource-record-sets \
-        --hosted-zone-id "$PORTAO_HOSTED_ZONE_ID" \
-        --change-batch "$CHANGE_BATCH" >/dev/null
-      echo "portao-init: upserted $PORTAO_DNS_NAME → $PUBLIC_IP"
-
-      # 4) Render config from peer list. Hub address derives from the
-      #    spoke subnet's .254 by convention (matches vpn-links.nix).
-      PEERS_JSON=$(aws ssm get-parameter \
-        --region "$PORTAO_REGION" \
-        --name "$PORTAO_PEERS_PARAM" \
-        --with-decryption --query 'Parameter.Value' --output text)
-      HUB_ADDRESS=$(echo "$PEERS_JSON" | jq -r '.hub_address // "10.100.30.254/24"')
-      LISTEN_PORT="''${PORTAO_WG_PORT:-51822}"
-
-      {
-        echo "[Interface]"
-        echo "PrivateKey = $(cat "$KEY_FILE")"
-        echo "Address = $HUB_ADDRESS"
-        echo "ListenPort = $LISTEN_PORT"
-        echo "MTU = 1380"
-        echo "Table = off  # portao routes are managed by sysctl IPv4 forwarding + per-spoke AllowedIPs"
-        echo
-        # Iterate spokes from JSON ({ peers: [{ name, public_key, psk, address }] })
-        echo "$PEERS_JSON" | jq -r '
-          .peers[] |
-          "[Peer]\n# spoke: " + .name + "\n" +
-          "PublicKey = " + .public_key + "\n" +
-          (if .psk then ("PresharedKey = " + .psk + "\n") else "" end) +
-          "AllowedIPs = " + .address + "\n"
-        '
-      } > "$CONF_FILE"
-      chmod 600 "$CONF_FILE"
-
-      # 5) Bring up the interface — systemd will systemctl restart this
-      #    on subsequent peer-refresh cycles via wg-syncconf.
-      if ! ip link show ${wgInterface} >/dev/null 2>&1; then
-        wg-quick up ${wgInterface}
-      fi
-    '';
-  };
-
-  portaoPeerRefresh = pkgs.writeShellApplication {
-    name = "portao-peer-refresh";
-    runtimeInputs = with pkgs; [awscli2 wireguard-tools jq coreutils];
-    text = ''
-      set -euo pipefail
-      # shellcheck source=/dev/null
-      . /etc/portao/env
-
-      CONF_FILE=/etc/wireguard/${wgInterface}.conf
-      KEY_FILE=/etc/wireguard/${wgInterface}.key
-
-      PEERS_JSON=$(aws ssm get-parameter \
-        --region "$PORTAO_REGION" \
-        --name "$PORTAO_PEERS_PARAM" \
-        --with-decryption --query 'Parameter.Value' --output text)
-      HUB_ADDRESS=$(echo "$PEERS_JSON" | jq -r '.hub_address // "10.100.30.254/24"')
-      LISTEN_PORT="''${PORTAO_WG_PORT:-51822}"
-
-      TMP=$(mktemp)
-      {
-        echo "[Interface]"
-        echo "PrivateKey = $(cat "$KEY_FILE")"
-        echo "Address = $HUB_ADDRESS"
-        echo "ListenPort = $LISTEN_PORT"
-        echo "MTU = 1380"
-        echo
-        echo "$PEERS_JSON" | jq -r '
-          .peers[] |
-          "[Peer]\n# spoke: " + .name + "\n" +
-          "PublicKey = " + .public_key + "\n" +
-          (if .psk then ("PresharedKey = " + .psk + "\n") else "" end) +
-          "AllowedIPs = " + .address + "\n"
-        '
-      } > "$TMP"
-
-      # Hot-reload only if changed.
-      if ! diff -q "$TMP" "$CONF_FILE" >/dev/null 2>&1; then
-        install -m 600 "$TMP" "$CONF_FILE"
-        # `wg syncconf` reloads peers without dropping the interface.
-        wg syncconf ${wgInterface} <(wg-quick strip "$CONF_FILE")
-      fi
-      rm -f "$TMP"
-    '';
-  };
-
-  # First-boot user_data fetcher. Authored as a typed tatara-lisp
-  # script (pleme-io's official replacement for inline bash anywhere
-  # control flow exceeds the 3-line glue threshold). The script lives
-  # as a sibling file so it can be edited / tested / reviewed
-  # independently of this Nix module.
-  portaoUserdataScript = ./portao-userdata.tlisp;
-
-  # MASQUERADE installer for the spoke subnet → declared internal CIDRs.
-  # Driven by PORTAO_ADVERTISE_CIDRS (rendered into /etc/portao/env by
-  # the LT user_data shim from Pangea::Architectures::Portao). Empty
-  # list = no NAT (hub-only reachability). See the .tlisp for the
-  # MASQUERADE-vs-SNAT trade-off discussion.
-  portaoNatScript = ./portao-nat.tlisp;
-
-  portaoWatchdog = pkgs.writeShellApplication {
-    name = "portao-watchdog";
-    runtimeInputs = with pkgs; [awscli2 wireguard-tools coreutils];
-    text = ''
-      set -euo pipefail
-      # shellcheck source=/dev/null
-      . /etc/portao/env
-
-      ASG_NAME="''${PORTAO_ASG_NAME:-portao-$PORTAO_ENV-asg}"
-      NOW=$(date +%s)
-      MAX_AGE=${toString idleThresholdSecs}
-      GRACE=${toString coldStartGraceSecs}
-
-      # Cold-start grace: when the instance has just been woken by a
-      # spoke's `cordel portao-wake`, the spoke's handshake hasn't had
-      # time to land yet. Honoring scaledown inside the grace window
-      # would terminate the instance the spoke is actively trying to
-      # reach, kicking off a churn loop. /proc/uptime is monotonic and
-      # local — no external state needed.
-      UPTIME=$(awk '{print int($1)}' /proc/uptime)
-      if [ "$UPTIME" -lt "$GRACE" ]; then
-        echo "portao-watchdog: cold-start grace ($UPTIME < $GRACE) — skipping scaledown"
-        exit 0
-      fi
-
-      # No peers configured yet → not idle, just bootstrapping.
-      if ! wg show ${wgInterface} latest-handshakes 2>/dev/null | grep -q .; then
-        exit 0
-      fi
-
-      OLDEST=0
-      while read -r _pubkey ts; do
-        # ts=0 means "never handshaken" — treat as max age (older than threshold).
-        if [ "$ts" = "0" ]; then
-          AGE=$((MAX_AGE + 1))
-        else
-          AGE=$((NOW - ts))
-        fi
-        # We want to keep alive if ANY peer is fresh — so track the MIN age.
-        if [ "$OLDEST" = "0" ] || [ "$AGE" -lt "$OLDEST" ]; then
-          OLDEST=$AGE
-        fi
-      done < <(wg show ${wgInterface} latest-handshakes)
-
-      if [ "$OLDEST" -gt "$MAX_AGE" ]; then
-        echo "portao-watchdog: all peers idle > $MAX_AGE seconds (oldest=$OLDEST), scaling $ASG_NAME to 0"
-        aws autoscaling set-desired-capacity \
-          --region "$PORTAO_REGION" \
-          --auto-scaling-group-name "$ASG_NAME" \
-          --desired-capacity 0 \
-          --honor-cooldown
-        # Also publish a metric so the operator dashboard sees it.
-        aws cloudwatch put-metric-data \
-          --region "$PORTAO_REGION" \
-          --namespace Pleme/Portao \
-          --metric-name SelfTeardown \
-          --dimensions "Env=$PORTAO_ENV" \
-          --value 1
-      fi
-    '';
-  };
+  # ── Lifecycle scripts — all tatara-lisp ─────────────────────────────
+  # The previous shell `portao-init` / `portao-peer-refresh` /
+  # `portao-watchdog` were brittle: writeShellApplication strips PATH
+  # to runtimeInputs, so any forgotten binary fails silently at exec
+  # time. The watchdog hit this exact bug (awk:command-not-found,
+  # silent drift for 17h). Tatara-script ships one cohesive runtime;
+  # the only externally-resolved binaries are the ones we explicitly
+  # hand to `exec-capture`, and those are pinned via the systemd
+  # unit's `path =` so missing-binary failures are caught at NixOS
+  # evaluation, not at runtime.
+  portaoInitScript        = ./portao-init.tlisp;
+  portaoPeerRefreshScript = ./portao-peer-refresh.tlisp;
+  portaoMetricScript      = ./portao-metric.tlisp;
+  portaoUserdataScript    = ./portao-userdata.tlisp;
+  portaoNatScript         = ./portao-nat.tlisp;
 
 in {
   # ── Amazon AMI base ─────────────────────────────────────────────────
@@ -319,9 +100,6 @@ in {
     wireguard-tools
     awscli2
     jq
-    portaoInit
-    portaoPeerRefresh
-    portaoWatchdog
     tatara-script
     htop
     tcpdump
@@ -367,8 +145,6 @@ in {
   system.stateVersion = lib.mkDefault "25.11";
 
   # ── Disable services pulled in by the blackmatter aggregator ────────
-  # (mirrors attic-server pattern — these aren't relevant to a single-
-  # purpose VPN concentrator and add closure weight).
   services.tor.enable = lib.mkForce false;
   virtualisation.docker.enable = lib.mkForce false;
   blackmatter.security.tools = {
@@ -381,31 +157,12 @@ in {
   blackmatter.security.hardening.enable = lib.mkForce false;
 
   # ── portao-userdata: fetch + execute EC2 user_data on first boot ────
-  # The NixOS amazon-image module ships an `amazon-init.service` that's
-  # supposed to fetch user_data from IMDSv2 and execute it, but its
-  # current upstream wiring (`After=multi-user.target`) makes it a no-op
-  # in practice — the unit reaches "ready" without firing the script,
-  # so /etc/portao/env never gets written.
-  #
-  # Owning the contract directly avoids that dependency: this unit
-  # explicitly fetches user_data via IMDSv2 and runs it before
-  # portao-init. ConditionPathExists guards against re-running on
-  # subsequent boots (user_data already executed) and during AMI bake
-  # (no IMDSv2 endpoint).
   systemd.services.portao-userdata = {
     description = "Portao userdata: fetch EC2 user_data via IMDSv2 and seed /etc/portao/env";
     wantedBy = ["multi-user.target"];
     after = ["network-online.target"];
     wants = ["network-online.target"];
-    # Don't re-run on subsequent boots — portao-init's env file is the
-    # marker that this unit already fired successfully. (RemainAfterExit
-    # alone isn't enough: a boot-after-stop would re-trigger the unit
-    # and overwrite a possibly-edited env file.) The .tlisp also has
-    # an idempotency guard for cases where the unit is started manually.
     unitConfig.ConditionPathExists = "!/etc/portao/env";
-    # tatara-script is the interpreter; curl + bash are the shelled-out
-    # primitives the .tlisp invokes via `(exec-capture)`. coreutils is
-    # there for `mkdir` invoked by tatara-lisp's `mkdir-p` stdlib.
     path = with pkgs; [tatara-script curl bash coreutils];
     serviceConfig = {
       Type = "oneshot";
@@ -416,35 +173,38 @@ in {
     };
   };
 
-  # ── portao-init: one-shot at boot ───────────────────────────────────
-  # Depends on portao-userdata so /etc/portao/env exists before this
-  # unit reads it. ConditionPathExists is a defensive belt-and-suspenders
-  # in case portao-userdata is masked / skipped / fails open.
+  # ── portao-init: one-shot at boot — keys + DNS + wg conf + bring-up ─
   systemd.services.portao-init = {
-    description = "Portao first-boot init: generate keys, claim EIP, render wg conf";
+    description = "Portao first-boot init: SSM keys, Route53 UPSERT, wg conf, wg-quick up";
     wantedBy = ["multi-user.target"];
     after = ["network-online.target" "portao-userdata.service"];
     requires = ["portao-userdata.service"];
     wants = ["network-online.target"];
     unitConfig.ConditionPathExists = "/etc/portao/env";
+    # tatara-script invokes these via `exec-capture`. Pinned here so a
+    # missing binary fails at NixOS evaluation rather than at runtime.
+    path = with pkgs; [tatara-script awscli2 wireguard-tools jq curl bash coreutils iproute2];
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
-      ExecStart = "${portaoInit}/bin/portao-init";
       StandardOutput = "journal";
       StandardError = "journal";
+      ExecStart = "${pkgs.tatara-script}/bin/tatara-script ${portaoInitScript}";
     };
   };
 
-  # ── portao-peer-refresh: 60s timer, hot-reloads peers from SSM ─────
+  # ── portao-peer-refresh: 60s SSM → wg syncconf hot-reload ───────────
   systemd.services.portao-peer-refresh = {
     description = "Portao spoke registry refresh (SSM → wg syncconf)";
     after = ["portao-init.service"];
     requires = ["portao-init.service"];
     unitConfig.ConditionPathExists = "/etc/portao/env";
+    path = with pkgs; [tatara-script awscli2 wireguard-tools jq bash coreutils];
     serviceConfig = {
       Type = "oneshot";
-      ExecStart = "${portaoPeerRefresh}/bin/portao-peer-refresh";
+      StandardOutput = "journal";
+      StandardError = "journal";
+      ExecStart = "${pkgs.tatara-script}/bin/tatara-script ${portaoPeerRefreshScript}";
     };
   };
   systemd.timers.portao-peer-refresh = {
@@ -458,10 +218,6 @@ in {
   };
 
   # ── portao-nat: install MASQUERADE rules from PORTAO_ADVERTISE_CIDRS ──
-  # Runs after portao-init has rendered /etc/portao/env. Idempotent (the
-  # tlisp checks each rule before adding), so a peer-refresh restart is
-  # safe. Without this unit, spokes can reach the hub but no further;
-  # the hub is the only Layer-3 entity the WG tunnel terminates at.
   systemd.services.portao-nat = {
     description = "Portao NAT: install iptables MASQUERADE for advertised internal CIDRs";
     wantedBy = ["multi-user.target"];
@@ -469,9 +225,6 @@ in {
     requires = ["portao-init.service"];
     wants = ["network-online.target"];
     unitConfig.ConditionPathExists = "/etc/portao/env";
-    # tatara-script reads /etc/portao/env directly (no shell sourcing).
-    # iptables + iproute2 are the typed binaries it invokes via
-    # `(exec-capture)`. coreutils for the tlisp's mkdir-p / file ops.
     path = with pkgs; [tatara-script iptables iproute2 coreutils];
     serviceConfig = {
       Type = "oneshot";
@@ -482,24 +235,34 @@ in {
     };
   };
 
-  # ── portao-watchdog: 5min timer, scales ASG to 0 when idle ─────────
-  systemd.services.portao-watchdog = {
-    description = "Portao idle watchdog — scale ASG to 0 if no fresh handshakes";
+  # ── portao-metric: 60s CloudWatch metric publisher ──────────────────
+  # Replaces the in-instance shell watchdog. The instance only emits
+  # the HandshakeAge metric; the AWS-side CloudWatch alarm + ASG
+  # SimpleScaling policy (declared by Pangea::Architectures::Portao)
+  # owns the scale-to-zero decision. TreatMissingData=breaching on
+  # the alarm means: if this publisher ever stops emitting (instance
+  # OOM, IAM failure, kernel panic, kill -9), the ASG drains anyway —
+  # fail-safe to $0.
+  systemd.services.portao-metric = {
+    description = "Portao metric: publish HandshakeAge to CloudWatch";
     after = ["portao-init.service"];
     requires = ["portao-init.service"];
     unitConfig.ConditionPathExists = "/etc/portao/env";
+    path = with pkgs; [tatara-script awscli2 wireguard-tools coreutils];
     serviceConfig = {
       Type = "oneshot";
-      ExecStart = "${portaoWatchdog}/bin/portao-watchdog";
+      StandardOutput = "journal";
+      StandardError = "journal";
+      ExecStart = "${pkgs.tatara-script}/bin/tatara-script ${portaoMetricScript}";
     };
   };
-  systemd.timers.portao-watchdog = {
-    description = "Portao idle watchdog — every 5 min";
+  systemd.timers.portao-metric = {
+    description = "Portao HandshakeAge metric — every 60s";
     wantedBy = ["timers.target"];
     timerConfig = {
-      OnBootSec = "5min";
-      OnUnitActiveSec = "5min";
-      AccuracySec = "30s";
+      OnBootSec = "60s";
+      OnUnitActiveSec = "60s";
+      AccuracySec = "5s";
     };
   };
 }

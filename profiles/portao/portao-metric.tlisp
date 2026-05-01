@@ -1,0 +1,121 @@
+;; portao-metric.tlisp
+;;
+;; Replaces the in-instance shell watchdog. The instance no longer
+;; scales itself down — it just publishes one number to CloudWatch:
+;;   Pleme/Portao/HandshakeAge dimensioned by Env=$PORTAO_ENV
+;;
+;; A CloudWatch alarm (declared in pangea-architectures Portao
+;; architecture) watches that metric. When the metric exceeds the
+;; idle threshold for the configured datapoints, the alarm fires
+;; an ASG SimpleScaling policy with adjustment_type=ExactCapacity,
+;; scaling_adjustment=0 — the ASG drains to 0 from outside the
+;; failure domain.
+;;
+;; Why this is less fragile than the prior shell watchdog:
+;;   - The control loop lives in AWS, not on the instance. Instance
+;;     OOM, kernel panic, IAM rotation, kill -9 — none stop the
+;;     alarm from firing.
+;;   - TreatMissingData=breaching means: if the metric ever fails
+;;     to publish (e.g. the publisher itself crashes), the alarm
+;;     interprets that as breaching and the ASG drains to 0. The
+;;     17-hour silent drift we saw with the awk-not-found bug is
+;;     impossible — failure to publish == fail-safe to $0.
+;;   - Metric semantics: we publish `min(uptime, min over peers of
+;;     (now - effective_handshake_ts))`. effective_ts = max(
+;;     handshake_ts, boot_ts) so peers that never handshaked
+;;     contribute uptime, not "since unix epoch". The metric is
+;;     thus "seconds since the freshest peer was alive" — exactly
+;;     what we want to alarm on.
+;;
+;; Invoked by portao-metric.timer (OnUnitActiveSec=60s).
+
+(define wg-iface "portao0")
+(define metric-namespace "Pleme/Portao")
+(define metric-name "HandshakeAge")
+(define env-file "/etc/portao/env")
+
+(define (parse-env-line line)
+  (let ((trimmed (string-trim line)))
+    (if (or (= 0 (string-length trimmed)) (string-starts-with? trimmed "#"))
+        (list)
+        (let ((caps (re-captures "^([A-Za-z_][A-Za-z0-9_]*)=(.*)$" trimmed)))
+          (if caps
+              (list (list (car (cdr caps)) (car (cdr (cdr caps)))))
+              (list))))))
+
+(define env-pairs
+  (foldl append (list)
+    (map parse-env-line (string-split (read-file env-file) "\n"))))
+
+(define (env-lookup key default)
+  (let ((found (filter (fn (p) (eq? (car p) key)) env-pairs)))
+    (if (nil? found) default (car (cdr (car found))))))
+
+(define portao-env (env-lookup "PORTAO_ENV" "unknown"))
+(define region     (env-lookup "PORTAO_REGION" ""))
+(when (= 0 (string-length region))
+  (log-error "portao-metric: PORTAO_REGION missing")
+  (exit 2))
+
+;; ── Read uptime (no awk dep — cut handles it; coreutils) ────────────
+(define uptime-raw (read-file "/proc/uptime"))
+(define uptime
+  (string->number (car (string-split (car (string-split uptime-raw " ")) "."))))
+
+;; ── Read wg latest-handshakes ────────────────────────────────────────
+;; Output shape: one line per peer, "<pubkey>\t<unix-seconds>". Peers
+;; that never handshaked have ts=0.
+(define wg-result
+  (exec-capture "wg" "show" wg-iface "latest-handshakes"))
+
+(define ages
+  (if (not (= 0 (alist-get wg-result :status)))
+      ;; Interface may not exist yet (race during boot). Treat as
+      ;; "no peers seen" → age = uptime → alarm fires once uptime
+      ;; passes the threshold (intended: a portao that's been up for
+      ;; N min with no peer ever connecting should drain).
+      (list uptime)
+      (let ((lines (filter (fn (l) (> (string-length (string-trim l)) 0))
+                           (string-split (alist-get wg-result :stdout) "\n"))))
+        (if (nil? lines)
+            ;; No peers configured at all yet. uptime is the right age.
+            (list uptime)
+            (map
+              (fn (line)
+                (let ((parts (string-split (string-trim line) "\t")))
+                  (let ((ts-raw (if (>= (length parts) 2) (car (cdr parts)) "0")))
+                    (let ((ts (string->number ts-raw)))
+                      ;; ts=0 → never handshaked → age=uptime (peer
+                      ;; isn't fresher than the instance itself).
+                      ;; Otherwise age=(now - ts), capped at uptime.
+                      (if (= ts 0)
+                          uptime
+                          (let ((now (string->number
+                                       (string-trim
+                                         (alist-get
+                                           (exec-capture "date" "+%s")
+                                           :stdout)))))
+                            (let ((raw-age (- now ts)))
+                              (if (> raw-age uptime) uptime raw-age))))))))
+              lines)))))
+
+;; ── min across peers ─────────────────────────────────────────────────
+(define min-age
+  (foldl (fn (acc x) (if (< x acc) x acc)) uptime ages))
+
+(log-info (string-format "portao-metric: env={} min-age={}s peers={}"
+                         portao-env min-age (length ages)))
+
+;; ── Publish to CloudWatch ────────────────────────────────────────────
+(define put-result
+  (exec-capture "aws" "cloudwatch" "put-metric-data"
+                "--region" region
+                "--namespace" metric-namespace
+                "--metric-name" metric-name
+                "--unit" "Seconds"
+                "--value" (number->string min-age)
+                "--dimensions" (string-format "Env={}" portao-env)))
+(when (not (= 0 (alist-get put-result :status)))
+  (log-error (string-format "portao-metric: put-metric-data failed: {}"
+                            (alist-get put-result :stderr)))
+  (exit 1))
