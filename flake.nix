@@ -45,6 +45,16 @@
       url = "github:pleme-io/cordel";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # tatara-lisp — pleme-io's typed Lisp scripting surface. Replaces
+    # `pkgs.writeShellApplication` for any portao first-boot logic that's
+    # more than 3 lines (per the org-wide no-shell directive). The
+    # portao-builder pulls in `pkgs.tatara-script` via overlay so the
+    # systemd unit can invoke `${pkgs.tatara-script}/bin/tatara-script
+    # <file>.tlisp` directly.
+    tatara-lisp = {
+      url = "github:pleme-io/tatara-lisp";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = {
@@ -537,6 +547,17 @@
         # in Pangea::Architectures::Portao as the AWS-side backstop for
         # the hub's own systemd watchdog timer.
         "${inputs.substrate}/lib/infra/cloudwatch-metric-publisher.nix"
+        # tatara-script overlay — provides `pkgs.tatara-script` so the
+        # portao profile's first-boot `portao-userdata.service` can
+        # invoke a typed .tlisp script instead of a writeShellApplication.
+        # The .tlisp file lives next to its consumer (profiles/portao/).
+        ({ ... }: {
+          nixpkgs.overlays = [
+            (final: _prev: {
+              tatara-script = inputs.tatara-lisp.packages.x86_64-linux.tatara-script;
+            })
+          ];
+        })
         ./profiles/portao
         ./profiles/aws-node-base
         (amiNodeIdentity "x86_64-linux")

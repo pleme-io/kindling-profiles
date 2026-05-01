@@ -199,6 +199,13 @@
     '';
   };
 
+  # First-boot user_data fetcher. Authored as a typed tatara-lisp
+  # script (pleme-io's official replacement for inline bash anywhere
+  # control flow exceeds the 3-line glue threshold). The script lives
+  # as a sibling file so it can be edited / tested / reviewed
+  # independently of this Nix module.
+  portaoUserdataScript = ./portao-userdata.tlisp;
+
   portaoWatchdog = pkgs.writeShellApplication {
     name = "portao-watchdog";
     runtimeInputs = with pkgs; [awscli2 wireguard-tools coreutils];
@@ -308,6 +315,7 @@ in {
     portaoInit
     portaoPeerRefresh
     portaoWatchdog
+    tatara-script
     htop
     tcpdump
     iotop
@@ -384,38 +392,21 @@ in {
     wants = ["network-online.target"];
     # Don't re-run on subsequent boots — portao-init's env file is the
     # marker that this unit already fired successfully. (RemainAfterExit
-    # alone isn't enough: a boot-after-stop would trigger the unit again
-    # and overwrite a possibly-edited env file.)
+    # alone isn't enough: a boot-after-stop would re-trigger the unit
+    # and overwrite a possibly-edited env file.) The .tlisp also has
+    # an idempotency guard for cases where the unit is started manually.
     unitConfig.ConditionPathExists = "!/etc/portao/env";
-    path = [pkgs.curl pkgs.coreutils];
+    # tatara-script is the interpreter; curl + bash are the shelled-out
+    # primitives the .tlisp invokes via `(exec-capture)`. coreutils is
+    # there for `mkdir` invoked by tatara-lisp's `mkdir-p` stdlib.
+    path = with pkgs; [tatara-script curl bash coreutils];
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
       StandardOutput = "journal";
       StandardError = "journal";
+      ExecStart = "${pkgs.tatara-script}/bin/tatara-script ${portaoUserdataScript}";
     };
-    script = ''
-      set -euo pipefail
-      mkdir -p /etc/portao
-
-      # IMDSv2 token (60s TTL is plenty — we only need one call).
-      TOKEN=$(curl -sf -X PUT \
-        -H "X-aws-ec2-metadata-token-ttl-seconds: 60" \
-        http://169.254.169.254/latest/api/token)
-
-      # Fetch user_data (404 = no userdata attached, which is fatal —
-      # there's no fallback shape; an unconfigured portao instance is
-      # useless).
-      USERDATA=$(curl -sf \
-        -H "X-aws-ec2-metadata-token: $TOKEN" \
-        http://169.254.169.254/latest/user-data)
-
-      # Execute under sh — the launch_template user_data is a shell
-      # script that writes /etc/portao/env. Trust comes from IMDSv2
-      # being instance-local + IAM-gated (the LT user_data is set by
-      # pangea, not user-controllable).
-      printf '%s\n' "$USERDATA" | sh
-    '';
   };
 
   # ── portao-init: one-shot at boot ───────────────────────────────────

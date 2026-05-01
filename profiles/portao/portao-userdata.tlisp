@@ -1,0 +1,97 @@
+;; portao-userdata.tlisp
+;;
+;; First-boot bootstrap for the portao JIT WireGuard concentrator AMI.
+;;
+;; Replaces what amazon-init.service was supposed to do but doesn't:
+;;   1. Fetch EC2 user_data via IMDSv2 (token PUT + body GET).
+;;   2. Pipe it into bash to seed /etc/portao/env.
+;;   3. portao-init.service then reads that env file and bootstraps
+;;      the WireGuard interface + Route53 A record + SSM hub-public-key.
+;;
+;; This script must be a no-op during AMI bake — packer's test instance
+;; has no LT user_data attached, so a 404 there is expected and must
+;; not fail activation. Same for any later boot where /etc/portao/env
+;; already exists.
+;;
+;; Why call out to curl at all (and not pure tatara-lisp http-get)?
+;; The HTTP stdlib's `http-get` only emits 2xx responses and has no
+;; PUT method, but IMDSv2 requires PUT for the token request and a
+;; tolerated-404 GET for the user_data fetch. `exec-capture` gives us
+;; typed access to curl's exit code without surrendering control flow
+;; to a shell pipeline.
+;;
+;; Invoked from systemd as:
+;;   ExecStart = ${tatara-script}/bin/tatara-script ${this-file}
+
+(define env-file "/etc/portao/env")
+(define imds-base "http://169.254.169.254/latest")
+
+;; Idempotency: ConditionPathExists=!/etc/portao/env in the systemd unit
+;; covers the cold-start case; this check covers manual `systemctl start`
+;; invocations where the unit's condition isn't re-evaluated.
+(when (is-file? env-file)
+  (log-info "portao-userdata: /etc/portao/env exists — nothing to do")
+  (exit 0))
+
+(mkdir-p "/etc/portao")
+
+;; ── IMDSv2 token (PUT, 60s TTL) ──────────────────────────────────────
+;; -sf  silent + fail-fast on HTTP 4xx/5xx
+;; -m 5 hard 5s deadline so AMI activation can't hang here forever
+(log-info "portao-userdata: requesting IMDSv2 token")
+(define token-result
+  (exec-capture "curl" "-sf" "-m" "5" "-X" "PUT"
+                "-H" "X-aws-ec2-metadata-token-ttl-seconds: 60"
+                (string-append imds-base "/api/token")))
+
+(define token-status (alist-get token-result :status))
+(when (not (= token-status 0))
+  (log-warn (string-format "portao-userdata: IMDSv2 token unavailable (curl exit {}) — exiting" token-status))
+  (exit 0))
+
+(define token (string-trim (alist-get token-result :stdout)))
+(when (= 0 (string-length token))
+  (log-warn "portao-userdata: empty IMDSv2 token — exiting")
+  (exit 0))
+
+;; ── Fetch user_data ──────────────────────────────────────────────────
+;; -f makes 404 (no user_data attached — packer test instance) exit
+;; non-zero so we can branch cleanly. Empty body is a treated-as-404
+;; case too.
+(log-info "portao-userdata: fetching user_data")
+(define ud-result
+  (exec-capture "curl" "-sf" "-m" "5"
+                "-H" (string-append "X-aws-ec2-metadata-token: " token)
+                (string-append imds-base "/user-data")))
+
+(define ud-status (alist-get ud-result :status))
+(when (not (= ud-status 0))
+  (log-info (string-format "portao-userdata: no user_data (curl exit {}) — exiting" ud-status))
+  (exit 0))
+
+(define ud-body (alist-get ud-result :stdout))
+(when (or (not ud-body) (= 0 (string-length (string-trim ud-body))))
+  (log-info "portao-userdata: empty user_data — exiting")
+  (exit 0))
+
+;; ── Execute the user_data shim ───────────────────────────────────────
+;; The Pangea-rendered LT user_data is a small POSIX shell script that
+;; writes /etc/portao/env. Trust comes from IMDSv2 being instance-local
+;; + IAM-gated; the LT user_data is set by pangea, not user-controllable.
+;; Drop the body into a temp file and exec bash on it (no in-line
+;; interpolation, no `sh -c "$body"`).
+(log-info "portao-userdata: executing user_data shim")
+(define shim-path (tmp-file))
+(write-file shim-path ud-body)
+
+(define shim-result (exec-capture "bash" shim-path))
+(define shim-status (alist-get shim-result :status))
+(rm shim-path)
+
+(when (not (= shim-status 0))
+  (log-error (string-format "portao-userdata: shim exited {} — stderr: {}"
+                            shim-status
+                            (alist-get shim-result :stderr)))
+  (exit shim-status))
+
+(log-info "portao-userdata: /etc/portao/env seeded")
