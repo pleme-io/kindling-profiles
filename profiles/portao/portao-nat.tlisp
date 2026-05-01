@@ -1,0 +1,113 @@
+;; portao-nat.tlisp
+;;
+;; Configure iptables MASQUERADE so the spoke subnet (10.100.30.0/24)
+;; can reach internal CIDRs declared in PORTAO_ADVERTISE_CIDRS via the
+;; hub's upstream interface. Without this, spokes can talk to the hub
+;; itself but no further — the whole point of the JIT VPN is reaching
+;; the surrounding VPC's internal services, so this is the load-bearing
+;; piece for any non-trivial use case.
+;;
+;; Empty / unset PORTAO_ADVERTISE_CIDRS = no-op (the default; preserves
+;; the hub-only-reachability shape for environments that haven't opted
+;; into VPC routing yet).
+;;
+;; Idempotent: each rule is `iptables -C` (check) before `iptables -A`
+;; (append). Re-running the unit on a peer-refresh / replacement boot
+;; doesn't duplicate rules.
+;;
+;; Invoked by portao-nat.service:
+;;   After=portao-init.service
+;;   Requires=portao-init.service
+;;   ConditionPathExists=/etc/portao/env
+;;
+;; MASQUERADE shape (vs explicit SNAT to the eth0 IP) means we don't
+;; need a VPC route-table entry for 10.100.30.0/24 — the hub rewrites
+;; the source to its own eth0 IP, which IS in the VPC CIDR and routes
+;; normally. The trade-off: spoke identity is invisible to the workload
+;; receiving the connection. For workloads that need spoke identity at
+;; the L7 layer (mTLS, app-layer auth) that's the right boundary anyway.
+
+(define env-file "/etc/portao/env")
+(define vpn-subnet "10.100.30.0/24")
+
+;; ── Parse /etc/portao/env into an alist ─────────────────────────────
+;; Format is a series of `KEY=VALUE` lines (POSIX shell .env shape).
+;; We don't try to interpret quoting / escapes — pangea writes raw
+;; values, so KEY=value pairs are unambiguous.
+(define (parse-env-line line)
+  (let ((trimmed (string-trim line)))
+    (if (or (= 0 (string-length trimmed))
+            (string-starts-with? trimmed "#"))
+        #f
+        (let ((idx (re-find "^([A-Za-z_][A-Za-z0-9_]*)=(.*)$" trimmed)))
+          (if idx
+              (let ((caps (re-captures "^([A-Za-z_][A-Za-z0-9_]*)=(.*)$" trimmed)))
+                (cons (car (cdr caps)) (car (cdr (cdr caps)))))
+              #f)))))
+
+(define raw-env (read-file env-file))
+(define env-pairs
+  (filter (fn (p) p)
+    (map parse-env-line (string-split raw-env "\n"))))
+
+(define (env-lookup key default)
+  (let ((found (filter (fn (p) (eq? (car p) key)) env-pairs)))
+    (if (empty? found) default (cdr (car found)))))
+
+(define cidrs-raw (env-lookup "PORTAO_ADVERTISE_CIDRS" ""))
+
+(when (= 0 (string-length (string-trim cidrs-raw)))
+  (log-info "portao-nat: PORTAO_ADVERTISE_CIDRS empty — no MASQUERADE rules to install")
+  (exit 0))
+
+(define cidrs
+  (filter (fn (s) (> (string-length s) 0))
+    (map string-trim (string-split cidrs-raw ","))))
+
+(log-info (string-format "portao-nat: installing MASQUERADE for {} CIDR(s) from {}"
+                         (length cidrs)
+                         vpn-subnet))
+
+;; ── Identify the upstream interface ─────────────────────────────────
+;; The one carrying the default route. On AWS this is `eth0` on Nitro
+;; instances and `enp...` on a few older types; deriving from
+;; `ip route show default` covers both.
+(define route-result (exec-capture "ip" "-o" "-4" "route" "show" "default"))
+(when (not (= 0 (alist-get route-result :status)))
+  (log-error "portao-nat: failed to read default route — cannot determine upstream interface")
+  (exit 1))
+
+(define route-line (alist-get route-result :stdout))
+;; Expected shape: `default via 10.0.1.1 dev eth0 proto dhcp ...`
+(define dev-caps (re-captures "dev (\\S+)" route-line))
+(when (not dev-caps)
+  (log-error (string-format "portao-nat: cannot parse upstream interface from: {}" route-line))
+  (exit 1))
+(define iface (car (cdr dev-caps)))
+
+(log-info (string-format "portao-nat: upstream interface = {}" iface))
+
+;; ── Idempotent rule installation ────────────────────────────────────
+;; iptables -C returns 0 if the rule exists, non-0 otherwise. Only -A
+;; if -C says it isn't there yet.
+(define (ensure-masquerade-rule cidr)
+  (define check (exec-capture "iptables" "-t" "nat" "-C" "POSTROUTING"
+                              "-s" vpn-subnet "-d" cidr
+                              "-o" iface "-j" "MASQUERADE"))
+  (if (= 0 (alist-get check :status))
+      (log-info (string-format "portao-nat: rule for {} already present" cidr))
+      (begin
+        (define add (exec-capture "iptables" "-t" "nat" "-A" "POSTROUTING"
+                                  "-s" vpn-subnet "-d" cidr
+                                  "-o" iface "-j" "MASQUERADE"))
+        (if (= 0 (alist-get add :status))
+            (log-info (string-format "portao-nat: installed MASQUERADE {} → {} via {}"
+                                     vpn-subnet cidr iface))
+            (begin
+              (log-error (string-format "portao-nat: iptables -A failed: {}"
+                                        (alist-get add :stderr)))
+              (exit 1))))))
+
+(map ensure-masquerade-rule cidrs)
+
+(log-info "portao-nat: all MASQUERADE rules installed")

@@ -206,6 +206,13 @@
   # independently of this Nix module.
   portaoUserdataScript = ./portao-userdata.tlisp;
 
+  # MASQUERADE installer for the spoke subnet → declared internal CIDRs.
+  # Driven by PORTAO_ADVERTISE_CIDRS (rendered into /etc/portao/env by
+  # the LT user_data shim from Pangea::Architectures::Portao). Empty
+  # list = no NAT (hub-only reachability). See the .tlisp for the
+  # MASQUERADE-vs-SNAT trade-off discussion.
+  portaoNatScript = ./portao-nat.tlisp;
+
   portaoWatchdog = pkgs.writeShellApplication {
     name = "portao-watchdog";
     runtimeInputs = with pkgs; [awscli2 wireguard-tools coreutils];
@@ -447,6 +454,31 @@ in {
       OnBootSec = "30s";
       OnUnitActiveSec = "60s";
       AccuracySec = "5s";
+    };
+  };
+
+  # ── portao-nat: install MASQUERADE rules from PORTAO_ADVERTISE_CIDRS ──
+  # Runs after portao-init has rendered /etc/portao/env. Idempotent (the
+  # tlisp checks each rule before adding), so a peer-refresh restart is
+  # safe. Without this unit, spokes can reach the hub but no further;
+  # the hub is the only Layer-3 entity the WG tunnel terminates at.
+  systemd.services.portao-nat = {
+    description = "Portao NAT: install iptables MASQUERADE for advertised internal CIDRs";
+    wantedBy = ["multi-user.target"];
+    after = ["portao-init.service" "network-online.target"];
+    requires = ["portao-init.service"];
+    wants = ["network-online.target"];
+    unitConfig.ConditionPathExists = "/etc/portao/env";
+    # tatara-script reads /etc/portao/env directly (no shell sourcing).
+    # iptables + iproute2 are the typed binaries it invokes via
+    # `(exec-capture)`. coreutils for the tlisp's mkdir-p / file ops.
+    path = with pkgs; [tatara-script iptables iproute2 coreutils];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      StandardOutput = "journal";
+      StandardError = "journal";
+      ExecStart = "${pkgs.tatara-script}/bin/tatara-script ${portaoNatScript}";
     };
   };
 
