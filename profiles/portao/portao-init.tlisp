@@ -90,18 +90,16 @@
 (exec-capture "chmod" "600" key-file)
 
 ;; ── 2) Public key → SSM (drift detection only) ───────────────────────
-(define pub-result (exec-capture "wg" "pubkey" key-file))
-(when (not (= 0 (alist-get pub-result :status)))
-  (log-error "portao-init: wg pubkey failed")
+;; wg pubkey reads from stdin, not a file argument — `wg pubkey <file>`
+;; is invalid syntax and exits non-zero. Pipe the privkey via bash;
+;; one-liner glue, well within the 3-line rule.
+(define pubkey-result
+  (exec-capture "bash" "-c" (string-format "wg pubkey < {}" key-file)))
+(when (not (= 0 (alist-get pubkey-result :status)))
+  (log-error (string-format "portao-init: wg pubkey failed: {}"
+                            (alist-get pubkey-result :stderr)))
   (exit 1))
-;; wg pubkey reads from stdin, not a file argument. Use a pipeline via
-;; bash since exec-capture doesn't compose pipes typed-stdin. Three
-;; lines, well below the 3-line glue threshold.
-(define pubkey
-  (string-trim
-    (alist-get
-      (exec-capture "bash" "-c" (string-format "wg pubkey < {}" key-file))
-      :stdout)))
+(define pubkey (string-trim (alist-get pubkey-result :stdout)))
 
 (write-file pub-file pubkey)
 (define put-pub-result
