@@ -57,10 +57,12 @@
   (log-error "portao-metric: PORTAO_REGION missing")
   (exit 2))
 
-;; ── Read uptime (no awk dep — cut handles it; coreutils) ────────────
+;; ── Read uptime (no awk dep — pure tatara-lisp parsing) ─────────────
+;; tatara-lisp's primitive set has no `string->number`; `read-string` is the
+;; reader entry-point and parses "60" → 60 (integer) cleanly.
 (define uptime-raw (read-file "/proc/uptime"))
 (define uptime
-  (string->number (car (string-split (car (string-split uptime-raw " ")) "."))))
+  (read-string (car (string-split (car (string-split uptime-raw " ")) "."))))
 
 ;; ── Read wg latest-handshakes ────────────────────────────────────────
 ;; Output shape: one line per peer, "<pubkey>\t<unix-seconds>". Peers
@@ -84,13 +86,13 @@
               (fn (line)
                 (let ((parts (string-split (string-trim line) "\t")))
                   (let ((ts-raw (if (>= (length parts) 2) (car (cdr parts)) "0")))
-                    (let ((ts (string->number ts-raw)))
+                    (let ((ts (read-string ts-raw)))
                       ;; ts=0 → never handshaked → age=uptime (peer
                       ;; isn't fresher than the instance itself).
                       ;; Otherwise age=(now - ts), capped at uptime.
                       (if (= ts 0)
                           uptime
-                          (let ((now (string->number
+                          (let ((now (read-string
                                        (string-trim
                                          (alist-get
                                            (exec-capture "date" "+%s")
@@ -113,7 +115,7 @@
                 "--namespace" metric-namespace
                 "--metric-name" metric-name
                 "--unit" "Seconds"
-                "--value" (number->string min-age)
+                "--value" (string-format "{}" min-age)
                 "--dimensions" (string-format "Env={}" portao-env)))
 (when (not (= 0 (alist-get put-result :status)))
   (log-error (string-format "portao-metric: put-metric-data failed: {}"
