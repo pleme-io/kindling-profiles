@@ -29471,11 +29471,11 @@
         "substrate": "substrate_29"
       },
       "locked": {
-        "lastModified": 1776635587,
-        "narHash": "sha256-p9tfJv639qkfdccVpg+JSCCNhXsG4V8cxeIrL3kTJA4=",
+        "lastModified": 1777739490,
+        "narHash": "sha256-BKvF8Oy+3P9IQLkKR1LYtk3vyA1EMw0T87+ug0p30S8=",
         "owner": "pleme-io",
         "repo": "kindling",
-        "rev": "519a20f6f1392020cee6be441f14590079e62a94",
+        "rev": "e0be034003ffec2cd08493d9af0882c77b3eade4",
         "type": "github"
       },
       "original": {
