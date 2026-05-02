@@ -1,0 +1,89 @@
+;; portao-publish-host-fingerprint.tlisp
+;;
+;; Reads the fresh SSH host pubkey generated on first boot, computes
+;; its SHA256 fingerprint via `ssh-keygen -lf`, publishes it to SSM at
+;; the path supplied via PORTAO_FINGERPRINT_PARAM. Operators (or
+;; `cordel portao ssh`) read that fingerprint to trust the instance
+;; without TOFU.
+;;
+;; Why this script exists: the AMI ships with no /etc/ssh/ssh_host_*_key
+;; files (stripped by kindling ami-build Phase 5), so each launched
+;; instance generates a unique per-instance keypair. That uniqueness is
+;; what makes the public AMI safe — but it also means we have no
+;; baked-in trust anchor. This script bridges the gap by publishing the
+;; fingerprint over an authenticated channel (IAM-scoped SSM put) so a
+;; trusted reader (IAM-scoped SSM get) can verify the connection.
+;;
+;; Trust chain: AWS IAM (who can write/read this SSM param) → fingerprint
+;; → host key. Anyone connecting can confirm the host they reached is
+;; the same instance that published the fingerprint to SSM.
+;;
+;; Invoked by portao-publish-host-fingerprint.service — one-shot,
+;; runs after portao-init and after sshd has had a chance to start.
+
+(define env-file "/etc/portao/env")
+(define host-pubkey-file "/etc/ssh/ssh_host_ed25519_key.pub")
+
+(define (parse-env-line line)
+  (let ((trimmed (string-trim line)))
+    (if (or (= 0 (string-length trimmed)) (string-starts-with? trimmed "#"))
+        (list)
+        (let ((caps (re-captures "^([A-Za-z_][A-Za-z0-9_]*)=(.*)$" trimmed)))
+          (if caps
+              (list (list (car (cdr caps)) (car (cdr (cdr caps)))))
+              (list))))))
+
+(define env-pairs
+  (foldl append (list)
+    (map parse-env-line (string-split (read-file env-file) "\n"))))
+
+(define (env-lookup key default)
+  (let ((found (filter (fn (p) (eq? (car p) key)) env-pairs)))
+    (if (nil? found) default (car (cdr (car found))))))
+
+(define (env-required key)
+  (let ((v (env-lookup key "")))
+    (if (= 0 (string-length v))
+        (begin
+          (log-error (string-format "portao-publish-host-fingerprint: missing required env var: {}" key))
+          (exit 2))
+        v)))
+
+(define fingerprint-param (env-required "PORTAO_FINGERPRINT_PARAM"))
+(define region            (env-required "PORTAO_REGION"))
+
+;; ── ssh-keygen -lf <pubkey> emits: "256 SHA256:<base64> root@host (ED25519)"
+(define keygen-result (exec-capture "ssh-keygen" "-lf" host-pubkey-file))
+(when (not (= 0 (alist-get keygen-result :status)))
+  (log-error (string-format "portao-publish-host-fingerprint: ssh-keygen -lf failed: {}"
+                            (alist-get keygen-result :stderr)))
+  (exit 1))
+
+(define keygen-line (string-trim (alist-get keygen-result :stdout)))
+(define parts (string-split keygen-line " "))
+(when (< (length parts) 2)
+  (log-error (string-format "portao-publish-host-fingerprint: unexpected ssh-keygen output: {}" keygen-line))
+  (exit 1))
+
+(define fingerprint (car (cdr parts)))
+(when (not (string-starts-with? fingerprint "SHA256:"))
+  (log-error (string-format "portao-publish-host-fingerprint: fingerprint missing SHA256: prefix: {}" fingerprint))
+  (exit 1))
+
+(log-info (string-format "portao-publish-host-fingerprint: publishing {} → {}"
+                         fingerprint fingerprint-param))
+
+(define put-result
+  (exec-capture "aws" "ssm" "put-parameter"
+                "--region" region
+                "--name" fingerprint-param
+                "--type" "String"
+                "--overwrite"
+                "--value" fingerprint))
+
+(when (not (= 0 (alist-get put-result :status)))
+  (log-error (string-format "portao-publish-host-fingerprint: ssm put-parameter failed: {}"
+                            (alist-get put-result :stderr)))
+  (exit 1))
+
+(log-info "portao-publish-host-fingerprint: done")

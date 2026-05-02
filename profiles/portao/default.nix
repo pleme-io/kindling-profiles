@@ -55,6 +55,7 @@
   portaoMetricScript      = ./portao-metric.tlisp;
   portaoUserdataScript    = ./portao-userdata.tlisp;
   portaoNatScript         = ./portao-nat.tlisp;
+  portaoPublishHostFingerprintScript = ./portao-publish-host-fingerprint.tlisp;
 
 in {
   # ── Amazon AMI base ─────────────────────────────────────────────────
@@ -232,6 +233,34 @@ in {
       StandardOutput = "journal";
       StandardError = "journal";
       ExecStart = "${pkgs.tatara-script}/bin/tatara-script ${portaoNatScript}";
+    };
+  };
+
+  # ── portao-publish-host-fingerprint ─────────────────────────────────
+  # One-shot. AMI ships with no /etc/ssh/ssh_host_*_key files (stripped
+  # by kindling ami-build Phase 5 to keep the public AMI safe), so each
+  # launched instance generates a unique keypair on first sshd start.
+  # This script reads the resulting public key, computes SHA256
+  # fingerprint via ssh-keygen -lf, publishes to SSM at
+  # PORTAO_FINGERPRINT_PARAM. Operators read it to trust the instance
+  # without TOFU.
+  systemd.services.portao-publish-host-fingerprint = {
+    description = "Portao publish first-boot SSH host fingerprint to SSM";
+    wantedBy = ["multi-user.target"];
+    after = ["portao-init.service" "sshd.service"];
+    requires = ["portao-init.service"];
+    wants = ["sshd.service"];
+    unitConfig = {
+      ConditionPathExists = "/etc/portao/env";
+      ConditionPathIsReadWrite = "/etc/ssh";
+    };
+    path = with pkgs; [tatara-script awscli2 openssh coreutils];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      StandardOutput = "journal";
+      StandardError = "journal";
+      ExecStart = "${pkgs.tatara-script}/bin/tatara-script ${portaoPublishHostFingerprintScript}";
     };
   };
 

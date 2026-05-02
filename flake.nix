@@ -442,8 +442,13 @@
           # `metric` unit replaces the deleted watchdog — the control
           # loop now lives in AWS as a CloudWatch alarm + ASG
           # SimpleScaling policy declared by Pangea::Architectures::Portao.
-          "systemctl list-unit-files | grep -E 'portao-(init|peer-refresh|metric)\\.service' || exit 1"
+          # `publish-host-fingerprint` publishes the per-instance SSH
+          # host fingerprint to SSM (replaces baked host keys).
+          "systemctl list-unit-files | grep -E 'portao-(init|peer-refresh|metric|publish-host-fingerprint)\\.service' || exit 1"
           "systemctl list-unit-files | grep -E 'portao-(peer-refresh|metric)\\.timer' || exit 1"
+          # ssh-keygen must be available (called by publish-host-fingerprint
+          # to derive SHA256 fingerprint from the per-instance host key).
+          "command -v ssh-keygen >/dev/null"
           # WireGuard tooling is a runtime dep of every lifecycle script.
           "command -v wg-quick >/dev/null && command -v wg >/dev/null"
           # Tatara-script is the interpreter. Absence here = bake
