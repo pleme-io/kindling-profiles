@@ -103,14 +103,24 @@
                             "Name=key,Values=pleme:k3s:ssm-prefix"
                 "--query" "Tags[0].Value"
                 "--output" "text"))
+;; describe-tags can fail in two legitimate non-cluster contexts:
+;;   1. AMI bake test instance — runs with the bake's IAM role
+;;      (pleme-ami-builder-instance) which has no ec2:DescribeTags;
+;;      we want this script to be a no-op there.
+;;   2. Any future non-k3s use of the AMI — same logic.
+;; In both cases the right behavior is: log + exit 0 (NOT 1), so the
+;; systemd unit succeeds and downstream gating (k3s.service waits on
+;; /var/lib/k3s-bootstrap-complete sentinel) keeps k3s itself off.
+;; Mirrors the portao-userdata pattern: graceful no-op when not in
+;; the right runtime context.
 (when (not (= 0 (alist-get tag-result :status)))
-  (log-error (string-format "k3s-bootstrap: describe-tags failed: {}"
-                            (alist-get tag-result :stderr)))
-  (exit 1))
+  (log-info (string-format "k3s-bootstrap: ec2:DescribeTags unavailable (curl exit {}) — bake context or no-perm, exiting 0"
+                            (alist-get tag-result :status)))
+  (exit 0))
 (define ssm-prefix (string-trim (alist-get tag-result :stdout)))
 (when (or (= 0 (string-length ssm-prefix)) (eq? ssm-prefix "None"))
-  (log-error "k3s-bootstrap: instance tag pleme:k3s:ssm-prefix is missing or None")
-  (exit 1))
+  (log-info "k3s-bootstrap: instance has no pleme:k3s:ssm-prefix tag — bake context or non-k3s use, exiting 0")
+  (exit 0))
 
 (log-info (string-format "k3s-bootstrap: ssm-prefix={}" ssm-prefix))
 
