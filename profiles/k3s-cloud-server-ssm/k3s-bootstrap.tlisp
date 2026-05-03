@@ -174,7 +174,17 @@
 (write-ca-from-ssm "tls/client-ca-key"          (string-append tls-dir "/client-ca.key"))
 (write-ca-from-ssm "tls/request-header-ca-crt"  (string-append tls-dir "/request-header-ca.crt"))
 (write-ca-from-ssm "tls/request-header-ca-key"  (string-append tls-dir "/request-header-ca.key"))
-(write-ca-from-ssm "tls/service-key"            (string-append tls-dir "/service.key"))
+;; service.key: NOT pre-seeded. K3s expects this file to be a PUBLIC
+;; key (for --service-account-key-file); seibi pki-bootstrap currently
+;; emits it as PKCS#8 PEM private, which K3s rejects with:
+;;   error reading public key file /var/lib/rancher/k3s/server/tls/service.key:
+;;   data does not contain any valid RSA or ECDSA public keys
+;; Letting K3s self-generate service.key + service.current.key on first
+;; boot is fine for this iteration — workloads don't survive sleep
+;; cycles, so SA-token signing-key determinism isn't load-bearing.
+;; Followup: have seibi emit service_key as the PUBLIC half of an
+;; explicit signing keypair, plus service.current.key as the private,
+;; if we ever need SA tokens to survive cluster recreation.
 
 ;; ── 2) /etc/rancher/k3s/config.yaml ─────────────────────────────────
 (define api-hostname            (ssm-get "config/api-hostname"))
