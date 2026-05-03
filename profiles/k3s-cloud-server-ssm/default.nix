@@ -84,6 +84,40 @@ in {
     unitConfig.ConditionPathExists = "/var/lib/k3s-bootstrap-complete";
   };
 
+  # ── FluxCD GitOps (runtime-config mode) ─────────────────────────────
+  # services.blackmatter.fluxcd's `conditionPath` flag flips the module
+  # into "kindling-gated" mode (per its source comment):
+  #   * gotk-components.yaml is ALWAYS baked  — cluster-agnostic
+  #   * gotk-sync.yaml is NOT baked          — runtime piece writes it
+  # That's exactly the SSM-runtime pattern we want: one generic AMI
+  # serves every cluster; per-cluster sync (URL/branch/path/token)
+  # arrives from SSM at first-boot via k3s-bootstrap.tlisp.
+  #
+  # The module's fluxcd-bootstrap.service sits behind the same
+  # ConditionPathExists, waits for k3s.service, then creates the
+  # `flux-system` Secret in the cluster from the on-disk token file.
+  #
+  # bake-time inputs that DON'T vary by cluster are real values; the
+  # ones that DO (url, path, branch) are placeholders that the runtime
+  # never reads — the module skips emitting gotk-sync entirely when
+  # conditionPath is set.
+  services.blackmatter.fluxcd = {
+    enable = true;
+    conditionPath = "/var/lib/kindling/fluxcd-ready";
+    source = {
+      url = "";              # not baked (conditionPath set)
+      branch = "main";       # default; tatara overrides via runtime gotk-sync
+      interval = "1m0s";
+      auth = "token";
+      tokenFile = "/var/lib/k3s-fluxcd/github-token";
+    };
+    reconcile = {
+      path = "";             # not baked
+      interval = "2m0s";
+      prune = true;
+    };
+  };
+
   # ── First-boot bootstrap (tatara-script) ───────────────────────────
   # Sister to portao-init.service. Reads instance tag pleme:k3s:ssm-prefix
   # → ssm get-parameters-by-path → writes CAs + config.yaml + Cilium

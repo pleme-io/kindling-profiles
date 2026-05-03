@@ -236,6 +236,58 @@
       (write-file cilium-manifest cilium-yaml)
       (log-info (string-format "k3s-bootstrap: wrote {}" cilium-manifest))))
 
+;; ── 3b) FluxCD GitOps (optional, mirrors Cilium pattern) ────────────
+;; All four keys optional in SSM. When fluxcd/enabled is "true" and
+;; the source-* keys are present, write:
+;;   /var/lib/rancher/k3s/server/manifests/gotk-sync.yaml
+;;     (GitRepository + root Kustomization templated from SSM values
+;;      — points at https://github.com/pleme-io/k8s.git, the cluster's
+;;      assigned branch + path)
+;;   /var/lib/k3s-fluxcd/github-token
+;;     (mode 0400, owned by root — services.blackmatter.fluxcd's
+;;      bootstrap service reads this when creating the flux-system
+;;      Secret in the cluster post-API-up)
+;;   /var/lib/kindling/fluxcd-ready
+;;     (sentinel — fluxcd-bootstrap.service ConditionPathExists fires
+;;      after k3s.service is up + this file exists)
+;;
+;; Skip the whole block if fluxcd/enabled isn't "true" — cluster boots
+;; without GitOps; operator can opt-in later by flipping the flag and
+;; sleep/waking.
+(define fluxcd-enabled (ssm-get-optional "fluxcd/enabled" ""))
+(if (not (eq? fluxcd-enabled "true"))
+    (log-info "k3s-bootstrap: fluxcd/enabled != \"true\" in SSM — skipping FluxCD setup")
+    (begin
+      (log-info "k3s-bootstrap: fluxcd enabled — fetching source config + token from SSM")
+      (define fluxcd-url    (ssm-get "fluxcd/source-url"))
+      (define fluxcd-branch (ssm-get "fluxcd/source-branch"))
+      (define fluxcd-path   (ssm-get "fluxcd/source-path"))
+      (define fluxcd-token  (ssm-get "fluxcd/github-token"))
+
+      ;; gotk-sync.yaml — GitRepository + root Kustomization, mirroring
+      ;; the shape services.blackmatter.fluxcd would have baked when
+      ;; conditionPath wasn't set. Lives in K3s's auto-deploy manifests
+      ;; dir; gets applied on cluster up alongside gotk-components.yaml
+      ;; (which IS baked, regardless of conditionPath).
+      (define gotk-sync-yaml
+        (string-format
+          "---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata:\n  name: flux-system\n  namespace: flux-system\nspec:\n  interval: 1m0s\n  ref:\n    branch: {}\n  secretRef:\n    name: flux-system\n  url: {}\n---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: flux-system\n  namespace: flux-system\nspec:\n  interval: 2m0s\n  path: {}\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"
+          fluxcd-branch fluxcd-url fluxcd-path))
+      (write-file (string-append manifests-dir "/gotk-sync.yaml") gotk-sync-yaml)
+      (log-info (string-format "k3s-bootstrap: wrote gotk-sync.yaml (url={} branch={} path={})"
+                                fluxcd-url fluxcd-branch fluxcd-path))
+
+      ;; Token file — read by services.blackmatter.fluxcd's bootstrap
+      ;; service when it creates the flux-system Secret.
+      (mkdir-p "/var/lib/k3s-fluxcd")
+      (write-file "/var/lib/k3s-fluxcd/github-token" fluxcd-token)
+      (exec-capture "chmod" "600" "/var/lib/k3s-fluxcd/github-token")
+
+      ;; Sentinel — fluxcd-bootstrap.service waits on this.
+      (mkdir-p "/var/lib/kindling")
+      (write-file "/var/lib/kindling/fluxcd-ready" "1\n")
+      (log-info "k3s-bootstrap: fluxcd setup complete (sentinel written)")))
+
 ;; ── 4) Route53 A record UPSERT ──────────────────────────────────────
 (define zone-id (ssm-get "config/zone-id"))
 
