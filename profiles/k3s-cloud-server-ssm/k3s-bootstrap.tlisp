@@ -191,7 +191,9 @@
           (map string-trim (string-split disabled-components ","))))
 
 (define disable-yaml
-  (string-join (map (fn (s) (string-format "  - {}" s)) disabled-list) "\n"))
+  ;; Args are (SEP XS) — sep first, list second. Reversing them
+  ;; gives `expected: "string", got: "list"` from the native impl.
+  (string-join "\n" (map (fn (s) (string-format "  - {}" s)) disabled-list)))
 
 (define config-yaml
   (string-format
@@ -209,10 +211,9 @@
   (string-format
     "apiVersion: helm.cattle.io/v1\nkind: HelmChart\nmetadata:\n  name: cilium\n  namespace: kube-system\nspec:\n  chart: cilium\n  repo: https://helm.cilium.io/\n  version: \"1.16.4\"\n  targetNamespace: kube-system\n  bootstrap: true\n  valuesContent: |-\n{}\n"
     ;; Indent every line of cilium-values by 4 spaces to fit valuesContent: |-
-    (string-join
+    (string-join "\n"
       (map (fn (line) (string-append "    " line))
-           (string-split cilium-values "\n"))
-      "\n")))
+           (string-split cilium-values "\n")))))
 
 (mkdir-p manifests-dir)
 (write-file cilium-manifest cilium-yaml)
