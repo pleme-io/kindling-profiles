@@ -598,6 +598,42 @@
       ];
     };
 
+    # NixOS configuration for the SSM-runtime K3s server AMI.
+    #
+    # Sister to portao-builder — same first-boot orchestration shape
+    # (tatara-script + IMDSv2 + SSM + AWS API). Different role:
+    # K3s server (Cilium CNI) instead of WireGuard concentrator.
+    #
+    # The AMI is GENERIC. Every per-cluster runtime value (api hostname,
+    # CAs, Cilium values, ...) flows from SSM at first-boot. Same kubeconfig
+    # works across infinite cluster rebuilds because k3s respects
+    # pre-existing CAs in /var/lib/rancher/k3s/server/tls/ — predictable
+    # kubeconfig pattern, see seibi pki-bootstrap k3s.
+    #
+    # Activated at Packer build time by build-k3s-ami in
+    # pangea-architectures/workspaces/platform-packer; bake's NIXOS_PROFILE
+    # dispatches here via packer.ami_types.k3s-cloud-server.profile in the
+    # platform yaml.
+    nixosConfigurations.k3s-cloud-server-ssm = nixpkgs.lib.nixosSystem {
+      system = "aarch64-linux";
+      modules = [
+        self.nixosModules.default
+        inputs.sops-nix.nixosModules.sops
+        inputs.home-manager.nixosModules.home-manager
+        # tatara-script overlay — provides `pkgs.tatara-script` so the
+        # k3s-cloud-server-ssm profile's first-boot k3s-bootstrap.service
+        # can invoke a typed .tlisp script instead of writeShellApplication.
+        ({ ... }: {
+          nixpkgs.overlays = [
+            (final: _prev: {
+              tatara-script = inputs.tatara-lisp.packages.aarch64-linux.tatara-script;
+            })
+          ];
+        })
+        ./profiles/k3s-cloud-server-ssm
+      ];
+    };
+
     # NixOS configuration for Packer-based Attic AMI builds (nixos-rebuild switch target)
     nixosConfigurations.attic-builder = nixpkgs.lib.nixosSystem {
       system = "x86_64-linux";

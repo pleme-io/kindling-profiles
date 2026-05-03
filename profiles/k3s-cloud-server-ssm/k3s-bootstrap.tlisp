@@ -1,0 +1,232 @@
+;; k3s-bootstrap.tlisp
+;;
+;; First-boot orchestration for the SSM-runtime K3s server.
+;;
+;; Sister to portao-init.tlisp — same pattern (IMDSv2 + SSM + AWS API
+;; calls) for a different role. Reads everything-runtime from SSM under
+;; a single bootstrap pointer (instance tag pleme:k3s:ssm-prefix), then
+;; materializes:
+;;
+;;   1. CA cert + key files in /var/lib/rancher/k3s/server/tls/
+;;      (server-ca, client-ca, request-header-ca + service.key)
+;;      → pre-existing CAs make K3s use them instead of generating new
+;;        ones — the deterministic kubeconfig pattern.
+;;
+;;   2. /etc/rancher/k3s/config.yaml from SSM keys (tls-san, disable,
+;;      flannel-backend, etc.)
+;;
+;;   3. /var/lib/rancher/k3s/server/manifests/cilium.yaml (HelmChart CR)
+;;      from the SSM-stored Cilium values blob. K3s auto-deploys
+;;      anything in the manifests/ directory.
+;;
+;;   4. Route53 A record upsert for the API hostname → instance public IP.
+;;
+;; After all four land, exit 0. k3s.service has
+;; ConditionPathExists=/etc/rancher/k3s/config.yaml, so it starts only
+;; once this script has finished writing config.
+;;
+;; Idempotent: ConditionPathExists=!/var/lib/k3s-bootstrap-complete in
+;; the systemd unit covers cold-start; this script's leading sentinel
+;; check covers manual re-runs.
+;;
+;; SSM keys read (under K3S_SSM_PREFIX from instance tag):
+;;
+;;   tls/server-ca-crt           ← base64-PEM
+;;   tls/server-ca-key           ← base64-PEM
+;;   tls/client-ca-crt           ← base64-PEM
+;;   tls/client-ca-key           ← base64-PEM
+;;   tls/request-header-ca-crt   ← base64-PEM
+;;   tls/request-header-ca-key   ← base64-PEM
+;;   tls/service-key             ← base64-PEM
+;;   config/api-hostname         ← FQDN, e.g. api.dev.use1.quero.lol
+;;   config/zone-id              ← Route53 zone ID for upsert
+;;   config/cluster-init         ← "true" or "false"
+;;   config/disabled-components  ← comma-separated, e.g. "traefik,servicelb"
+;;   config/flannel-backend      ← "none" (Cilium replaces flannel)
+;;   config/disable-kube-proxy   ← "true"
+;;   config/disable-network-policy ← "true"
+;;   config/cilium-values        ← multi-line YAML for the HelmChart CR
+
+(define sentinel "/var/lib/k3s-bootstrap-complete")
+(define imds-base "http://169.254.169.254/latest")
+(define tls-dir "/var/lib/rancher/k3s/server/tls")
+(define manifests-dir "/var/lib/rancher/k3s/server/manifests")
+(define config-file "/etc/rancher/k3s/config.yaml")
+(define cilium-manifest "/var/lib/rancher/k3s/server/manifests/cilium.yaml")
+
+;; ── Idempotency ─────────────────────────────────────────────────────
+(when (is-file? sentinel)
+  (log-info "k3s-bootstrap: sentinel exists — nothing to do")
+  (exit 0))
+
+;; ── IMDSv2 token ────────────────────────────────────────────────────
+(log-info "k3s-bootstrap: requesting IMDSv2 token")
+(define token-result
+  (exec-capture "curl" "-sf" "-m" "5" "-X" "PUT"
+                "-H" "X-aws-ec2-metadata-token-ttl-seconds: 60"
+                (string-append imds-base "/api/token")))
+(when (not (= 0 (alist-get token-result :status)))
+  (log-error (string-format "k3s-bootstrap: IMDSv2 token unavailable (curl exit {})"
+                            (alist-get token-result :status)))
+  (exit 1))
+(define imds-token (string-trim (alist-get token-result :stdout)))
+
+(define (imds-get path)
+  (define r
+    (exec-capture "curl" "-sf" "-m" "5"
+                  "-H" (string-append "X-aws-ec2-metadata-token: " imds-token)
+                  (string-append imds-base path)))
+  (if (= 0 (alist-get r :status))
+      (string-trim (alist-get r :stdout))
+      ""))
+
+(define instance-id (imds-get "/meta-data/instance-id"))
+(define region      (imds-get "/meta-data/placement/region"))
+(define public-ip   (imds-get "/meta-data/public-ipv4"))
+
+(when (or (= 0 (string-length instance-id))
+          (= 0 (string-length region))
+          (= 0 (string-length public-ip)))
+  (log-error "k3s-bootstrap: missing instance metadata — aborting")
+  (exit 1))
+
+(log-info (string-format "k3s-bootstrap: instance={} region={} public-ip={}"
+                          instance-id region public-ip))
+
+;; ── SSM prefix from instance tag ────────────────────────────────────
+;; aws ec2 describe-tags is the typed source. The instance was tagged
+;; by platform-k3s's launch template with pleme:k3s:ssm-prefix.
+(define tag-result
+  (exec-capture "aws" "ec2" "describe-tags"
+                "--region" region
+                "--filters" (string-format "Name=resource-id,Values={}" instance-id)
+                            "Name=key,Values=pleme:k3s:ssm-prefix"
+                "--query" "Tags[0].Value"
+                "--output" "text"))
+(when (not (= 0 (alist-get tag-result :status)))
+  (log-error (string-format "k3s-bootstrap: describe-tags failed: {}"
+                            (alist-get tag-result :stderr)))
+  (exit 1))
+(define ssm-prefix (string-trim (alist-get tag-result :stdout)))
+(when (or (= 0 (string-length ssm-prefix)) (eq? ssm-prefix "None"))
+  (log-error "k3s-bootstrap: instance tag pleme:k3s:ssm-prefix is missing or None")
+  (exit 1))
+
+(log-info (string-format "k3s-bootstrap: ssm-prefix={}" ssm-prefix))
+
+;; ── SSM helpers ─────────────────────────────────────────────────────
+(define (ssm-get key)
+  (define full-name (string-append ssm-prefix key))
+  (define r
+    (exec-capture "aws" "ssm" "get-parameter"
+                  "--region" region
+                  "--name" full-name
+                  "--with-decryption"
+                  "--query" "Parameter.Value"
+                  "--output" "text"))
+  (if (= 0 (alist-get r :status))
+      (string-trim (alist-get r :stdout))
+      (begin
+        (log-error (string-format "k3s-bootstrap: SSM get-parameter {} failed: {}"
+                                  full-name (alist-get r :stderr)))
+        (exit 1))))
+
+(define (ssm-get-optional key default)
+  (define full-name (string-append ssm-prefix key))
+  (define r
+    (exec-capture "aws" "ssm" "get-parameter"
+                  "--region" region
+                  "--name" full-name
+                  "--with-decryption"
+                  "--query" "Parameter.Value"
+                  "--output" "text"))
+  (if (= 0 (alist-get r :status))
+      (string-trim (alist-get r :stdout))
+      default))
+
+;; ── 1) CAs to /var/lib/rancher/k3s/server/tls/ ──────────────────────
+;; All values are base64-PEM. Decode + write with 0600 perms.
+(mkdir-p tls-dir)
+
+(define (write-ca-from-ssm ssm-key file-path)
+  (log-info (string-format "k3s-bootstrap: fetching {} → {}" ssm-key file-path))
+  (define b64 (ssm-get ssm-key))
+  ;; Pure base64 + write — no shell pipeline. tatara-script's
+  ;; base64-decode returns the decoded bytes; write-file accepts string
+  ;; for now (the PEM payload is ASCII text, so no binary loss).
+  (define pem (base64-decode b64))
+  (write-file file-path pem)
+  (exec-capture "chmod" "600" file-path))
+
+(write-ca-from-ssm "tls/server-ca-crt"          (string-append tls-dir "/server-ca.crt"))
+(write-ca-from-ssm "tls/server-ca-key"          (string-append tls-dir "/server-ca.key"))
+(write-ca-from-ssm "tls/client-ca-crt"          (string-append tls-dir "/client-ca.crt"))
+(write-ca-from-ssm "tls/client-ca-key"          (string-append tls-dir "/client-ca.key"))
+(write-ca-from-ssm "tls/request-header-ca-crt"  (string-append tls-dir "/request-header-ca.crt"))
+(write-ca-from-ssm "tls/request-header-ca-key"  (string-append tls-dir "/request-header-ca.key"))
+(write-ca-from-ssm "tls/service-key"            (string-append tls-dir "/service.key"))
+
+;; ── 2) /etc/rancher/k3s/config.yaml ─────────────────────────────────
+(define api-hostname            (ssm-get "config/api-hostname"))
+(define cluster-init            (ssm-get-optional "config/cluster-init" "true"))
+(define disabled-components     (ssm-get-optional "config/disabled-components" "traefik,servicelb"))
+(define flannel-backend         (ssm-get-optional "config/flannel-backend" "none"))
+(define disable-kube-proxy      (ssm-get-optional "config/disable-kube-proxy" "true"))
+(define disable-network-policy  (ssm-get-optional "config/disable-network-policy" "true"))
+
+;; Render disabled-components as a YAML list. Lightweight templating —
+;; the input is a comma-separated string (operator yaml convenience).
+(define disabled-list
+  (filter (fn (s) (not (= 0 (string-length s))))
+          (map string-trim (string-split disabled-components ","))))
+
+(define disable-yaml
+  (string-join (map (fn (s) (string-format "  - {}" s)) disabled-list) "\n"))
+
+(define config-yaml
+  (string-format
+    "# /etc/rancher/k3s/config.yaml — generated by k3s-bootstrap.tlisp\nwrite-kubeconfig-mode: \"0644\"\ncluster-init: {}\nflannel-backend: {}\ndisable-network-policy: {}\ndisable-kube-proxy: {}\ntls-san:\n  - {}\ndisable:\n{}\n"
+    cluster-init flannel-backend disable-network-policy disable-kube-proxy
+    api-hostname disable-yaml))
+
+(mkdir-p "/etc/rancher/k3s")
+(write-file config-file config-yaml)
+(log-info (string-format "k3s-bootstrap: wrote {}" config-file))
+
+;; ── 3) Cilium HelmChart manifest (auto-deployed by K3s) ─────────────
+(define cilium-values (ssm-get "config/cilium-values"))
+(define cilium-yaml
+  (string-format
+    "apiVersion: helm.cattle.io/v1\nkind: HelmChart\nmetadata:\n  name: cilium\n  namespace: kube-system\nspec:\n  chart: cilium\n  repo: https://helm.cilium.io/\n  version: \"1.16.4\"\n  targetNamespace: kube-system\n  bootstrap: true\n  valuesContent: |-\n{}\n"
+    ;; Indent every line of cilium-values by 4 spaces to fit valuesContent: |-
+    (string-join
+      (map (fn (line) (string-append "    " line))
+           (string-split cilium-values "\n"))
+      "\n")))
+
+(mkdir-p manifests-dir)
+(write-file cilium-manifest cilium-yaml)
+(log-info (string-format "k3s-bootstrap: wrote {}" cilium-manifest))
+
+;; ── 4) Route53 A record UPSERT ──────────────────────────────────────
+(define zone-id (ssm-get "config/zone-id"))
+
+(define change-batch
+  (string-format
+    "{\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"{}\",\"Type\":\"A\",\"TTL\":60,\"ResourceRecords\":[{\"Value\":\"{}\"}]}}]}"
+    api-hostname public-ip))
+
+(define dns-result
+  (exec-capture "aws" "route53" "change-resource-record-sets"
+                "--hosted-zone-id" zone-id
+                "--change-batch" change-batch))
+(when (not (= 0 (alist-get dns-result :status)))
+  (log-error (string-format "k3s-bootstrap: Route53 UPSERT failed: {}"
+                            (alist-get dns-result :stderr)))
+  (exit 1))
+(log-info (string-format "k3s-bootstrap: upserted {} → {}" api-hostname public-ip))
+
+;; ── Sentinel: signal completion ─────────────────────────────────────
+(write-file sentinel
+  (string-format "{}\n{}\n{}\n" instance-id api-hostname public-ip))
+(log-info "k3s-bootstrap: complete")
