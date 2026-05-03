@@ -216,18 +216,25 @@
 (log-info (string-format "k3s-bootstrap: wrote {}" config-file))
 
 ;; ── 3) Cilium HelmChart manifest (auto-deployed by K3s) ─────────────
-(define cilium-values (ssm-get "config/cilium-values"))
-(define cilium-yaml
-  (string-format
-    "apiVersion: helm.cattle.io/v1\nkind: HelmChart\nmetadata:\n  name: cilium\n  namespace: kube-system\nspec:\n  chart: cilium\n  repo: https://helm.cilium.io/\n  version: \"1.16.4\"\n  targetNamespace: kube-system\n  bootstrap: true\n  valuesContent: |-\n{}\n"
-    ;; Indent every line of cilium-values by 4 spaces to fit valuesContent: |-
-    (string-join "\n"
-      (map (fn (line) (string-append "    " line))
-           (string-split cilium-values "\n")))))
-
-(mkdir-p manifests-dir)
-(write-file cilium-manifest cilium-yaml)
-(log-info (string-format "k3s-bootstrap: wrote {}" cilium-manifest))
+;; cilium-values is OPTIONAL in SSM. When absent (or empty), the
+;; cluster is configured with K3s's default CNI (flannel) and we skip
+;; emitting the Cilium HelmChart manifest entirely. Driven by the
+;; `k3s.cni` flag in pleme.yaml: cilium → values present, flannel →
+;; no values key in SSM.
+(define cilium-values (ssm-get-optional "config/cilium-values" ""))
+(if (= 0 (string-length cilium-values))
+    (log-info "k3s-bootstrap: cilium-values absent in SSM — running with K3s default CNI (flannel)")
+    (begin
+      (define cilium-yaml
+        (string-format
+          "apiVersion: helm.cattle.io/v1\nkind: HelmChart\nmetadata:\n  name: cilium\n  namespace: kube-system\nspec:\n  chart: cilium\n  repo: https://helm.cilium.io/\n  version: \"1.16.4\"\n  targetNamespace: kube-system\n  bootstrap: true\n  valuesContent: |-\n{}\n"
+          ;; Indent every line of cilium-values by 4 spaces to fit valuesContent: |-
+          (string-join "\n"
+            (map (fn (line) (string-append "    " line))
+                 (string-split cilium-values "\n")))))
+      (mkdir-p manifests-dir)
+      (write-file cilium-manifest cilium-yaml)
+      (log-info (string-format "k3s-bootstrap: wrote {}" cilium-manifest))))
 
 ;; ── 4) Route53 A record UPSERT ──────────────────────────────────────
 (define zone-id (ssm-get "config/zone-id"))
