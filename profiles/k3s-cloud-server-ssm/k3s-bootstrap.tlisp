@@ -46,6 +46,18 @@
 ;;   config/disable-kube-proxy   ← "true"
 ;;   config/disable-network-policy ← "true"
 ;;   config/cilium-values        ← multi-line YAML for the HelmChart CR
+;;
+;; SSM keys WRITTEN (best-effort phase markers — operator pollable):
+;;
+;;   first-boot/phase            ← String. Values, in order:
+;;     "ssm-prefix"   IMDS + tag discovery done; instance is a real cluster member
+;;     "dns-upsert"   Route53 A record points at this instance — DNS
+;;                    propagation begins NOW, parallel with rest of boot
+;;     "tls-ca"       all 6 CA files materialized
+;;     "config"       /etc/rancher/k3s/config.yaml written
+;;     "cilium"       Cilium HelmChart manifest written (skipped on flannel)
+;;     "fluxcd"       gotk-sync.yaml + token + sentinel written (skipped if disabled)
+;;     "ready"        sentinel written; k3s.service may now start
 
 (define sentinel "/var/lib/k3s-bootstrap-complete")
 (define imds-base "http://169.254.169.254/latest")
@@ -154,6 +166,48 @@
       (string-trim (alist-get r :stdout))
       default))
 
+;; Best-effort phase publisher. Failure is logged + swallowed —
+;; operator-side polling is a convenience layer; first-boot must not
+;; abort because we couldn't write a marker.
+(define (publish-phase phase)
+  (define r
+    (exec-capture "aws" "ssm" "put-parameter"
+                  "--region" region
+                  "--name" (string-append ssm-prefix "first-boot/phase")
+                  "--type" "String"
+                  "--value" phase
+                  "--overwrite"))
+  (if (= 0 (alist-get r :status))
+      (log-info (string-format "k3s-bootstrap: phase={}" phase))
+      (log-info (string-format "k3s-bootstrap: phase={} (publish best-effort skipped: {})"
+                                phase (alist-get r :stderr)))))
+
+(publish-phase "ssm-prefix")
+
+;; ── EARLY: Route53 A record UPSERT ──────────────────────────────────
+;; Done first so DNS propagation runs in parallel with the rest of the
+;; boot. By the time k3s.service exposes :6443, the operator's resolver
+;; has likely already converged on the new IP. Saves 30–60s of wall
+;; time wake→stable from the operator's perspective.
+(define api-hostname (ssm-get "config/api-hostname"))
+(define zone-id      (ssm-get "config/zone-id"))
+
+(define change-batch
+  (string-format
+    "{\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"{}\",\"Type\":\"A\",\"TTL\":60,\"ResourceRecords\":[{\"Value\":\"{}\"}]}}]}"
+    api-hostname public-ip))
+
+(define dns-result
+  (exec-capture "aws" "route53" "change-resource-record-sets"
+                "--hosted-zone-id" zone-id
+                "--change-batch" change-batch))
+(when (not (= 0 (alist-get dns-result :status)))
+  (log-error (string-format "k3s-bootstrap: Route53 UPSERT failed: {}"
+                            (alist-get dns-result :stderr)))
+  (exit 1))
+(log-info (string-format "k3s-bootstrap: upserted {} → {}" api-hostname public-ip))
+(publish-phase "dns-upsert")
+
 ;; ── 1) CAs to /var/lib/rancher/k3s/server/tls/ ──────────────────────
 ;; All values are base64-PEM. Decode + write with 0600 perms.
 (mkdir-p tls-dir)
@@ -174,6 +228,7 @@
 (write-ca-from-ssm "tls/client-ca-key"          (string-append tls-dir "/client-ca.key"))
 (write-ca-from-ssm "tls/request-header-ca-crt"  (string-append tls-dir "/request-header-ca.crt"))
 (write-ca-from-ssm "tls/request-header-ca-key"  (string-append tls-dir "/request-header-ca.key"))
+(publish-phase "tls-ca")
 ;; service.key: NOT pre-seeded. K3s expects this file to be a PUBLIC
 ;; key (for --service-account-key-file); seibi pki-bootstrap currently
 ;; emits it as PKCS#8 PEM private, which K3s rejects with:
@@ -187,7 +242,7 @@
 ;; if we ever need SA tokens to survive cluster recreation.
 
 ;; ── 2) /etc/rancher/k3s/config.yaml ─────────────────────────────────
-(define api-hostname            (ssm-get "config/api-hostname"))
+;; api-hostname already fetched + used in the early DNS UPSERT block.
 (define cluster-init            (ssm-get-optional "config/cluster-init" "true"))
 (define disabled-components     (ssm-get-optional "config/disabled-components" "traefik,servicelb"))
 (define flannel-backend         (ssm-get-optional "config/flannel-backend" "none"))
@@ -214,6 +269,7 @@
 (mkdir-p "/etc/rancher/k3s")
 (write-file config-file config-yaml)
 (log-info (string-format "k3s-bootstrap: wrote {}" config-file))
+(publish-phase "config")
 
 ;; ── 3) Cilium HelmChart manifest (auto-deployed by K3s) ─────────────
 ;; cilium-values is OPTIONAL in SSM. When absent (or empty), the
@@ -235,6 +291,7 @@
       (mkdir-p manifests-dir)
       (write-file cilium-manifest cilium-yaml)
       (log-info (string-format "k3s-bootstrap: wrote {}" cilium-manifest))))
+(publish-phase "cilium")
 
 ;; ── 3b) FluxCD GitOps (optional, mirrors Cilium pattern) ────────────
 ;; All four keys optional in SSM. When fluxcd/enabled is "true" and
@@ -287,26 +344,10 @@
       (mkdir-p "/var/lib/kindling")
       (write-file "/var/lib/kindling/fluxcd-ready" "1\n")
       (log-info "k3s-bootstrap: fluxcd setup complete (sentinel written)")))
-
-;; ── 4) Route53 A record UPSERT ──────────────────────────────────────
-(define zone-id (ssm-get "config/zone-id"))
-
-(define change-batch
-  (string-format
-    "{\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"{}\",\"Type\":\"A\",\"TTL\":60,\"ResourceRecords\":[{\"Value\":\"{}\"}]}}]}"
-    api-hostname public-ip))
-
-(define dns-result
-  (exec-capture "aws" "route53" "change-resource-record-sets"
-                "--hosted-zone-id" zone-id
-                "--change-batch" change-batch))
-(when (not (= 0 (alist-get dns-result :status)))
-  (log-error (string-format "k3s-bootstrap: Route53 UPSERT failed: {}"
-                            (alist-get dns-result :stderr)))
-  (exit 1))
-(log-info (string-format "k3s-bootstrap: upserted {} → {}" api-hostname public-ip))
+(publish-phase "fluxcd")
 
 ;; ── Sentinel: signal completion ─────────────────────────────────────
 (write-file sentinel
   (string-format "{}\n{}\n{}\n" instance-id api-hostname public-ip))
 (log-info "k3s-bootstrap: complete")
+(publish-phase "ready")
