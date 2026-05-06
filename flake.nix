@@ -910,11 +910,16 @@
       # K3s AMI pipeline (build → basic test → promote)
       # Cluster test disabled until skip_nix_rebuild K3s startup is resolved.
       # Real validation via cluster deploy + scale test.
+      # Bake target = the SSM key pleme-dev's launch template actually
+      # reads (resolve:ssm:/pangea/pleme/k3s-ami-id). Previously wrote
+      # to /pangea/akeyless-dev/nixos-ami-id which had no consumers —
+      # operator had to hand-copy after every bake. One key, one path,
+      # zero drift.
       k3sPipeline = amiBuild.mkAmiBuildPipeline {
         forgePackage = inputs.ami-forge.packages.aarch64-darwin.default;
         buildTemplate = self.packages.aarch64-darwin.build-template;
         testTemplate = self.packages.aarch64-darwin.test-template;
-        ssmParameter = "/pangea/akeyless-dev/nixos-ami-id";
+        ssmParameter = "/pangea/pleme/k3s-ami-id";
         amiName = "nixos-k3s-cloud-server";
         awsProfile = "akeyless-development";
         clusterTestConfig = self.packages.aarch64-darwin.cluster-test-config;
@@ -971,7 +976,7 @@
             name = "test-basic";
           }
         ];
-        promoteSsm = "/pangea/akeyless-dev/nixos-ami-id";
+        promoteSsm = "/pangea/pleme/k3s-ami-id";
         amiName = "nixos-k3s-cloud-server";
         awsProfile = "akeyless-development";
         atticSsm = "/pangea/attic-cache/nixos-ami-id";
