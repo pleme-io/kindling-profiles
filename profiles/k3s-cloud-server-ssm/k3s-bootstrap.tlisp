@@ -346,6 +346,47 @@
       (log-info "k3s-bootstrap: fluxcd setup complete (sentinel written)")))
 (publish-phase "fluxcd")
 
+;; ── Phase: imagepullsecrets — bootstrap dockerconfigjson Secrets ────
+;;
+;; Pangea pushes one entry per pull-secret under
+;;   /pangea/<plat>/k3s/<cluster>/imagepullsecrets/<name>/{namespace,registry,dockerconfigjson}
+;; plus a roster at .../imagepullsecrets/index (comma-separated names).
+;;
+;; For each name we:
+;;   1. fetch namespace + dockerconfigjson from SSM
+;;   2. base64-encode the dockerconfigjson (k8s Secret.data wants base64)
+;;   3. write a multi-doc YAML manifest into K3s's auto-apply dir
+;;      containing Namespace + Secret(type=kubernetes.io/dockerconfigjson)
+;;
+;; K3s's manifest-controller then auto-applies on first boot — pods
+;; referencing the secret name in `imagePullSecrets:` can pull from
+;; the registry without any operator action.
+;;
+;; If imagepullsecrets/index is empty/missing, skip the whole block.
+(define ipsr-index (ssm-get-optional "imagepullsecrets/index" ""))
+(if (eq? ipsr-index "")
+    (log-info "k3s-bootstrap: no imagepullsecrets configured — skipping")
+    (begin
+      (log-info (string-format "k3s-bootstrap: imagepullsecrets roster: {}" ipsr-index))
+      (define ipsr-names (string-split ipsr-index ","))
+      (for-each
+        (lambda (name)
+          (log-info (string-format "k3s-bootstrap: writing imagepullsecret {}" name))
+          (define ns        (ssm-get (string-format "imagepullsecrets/{}/namespace" name)))
+          (define dcj       (ssm-get (string-format "imagepullsecrets/{}/dockerconfigjson" name)))
+          (define dcj-b64   (base64-encode dcj))
+          (define manifest
+            (string-format
+              "---\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: {}\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: {}\n  namespace: {}\ntype: kubernetes.io/dockerconfigjson\ndata:\n  .dockerconfigjson: {}\n"
+              ns name ns dcj-b64))
+          (define manifest-path
+            (string-append manifests-dir "/imagepullsecret-" name ".yaml"))
+          (write-file manifest-path manifest)
+          (exec-capture "chmod" "600" manifest-path)
+          (log-info (string-format "k3s-bootstrap: wrote {} (ns={})" manifest-path ns)))
+        ipsr-names)))
+(publish-phase "imagepullsecrets")
+
 ;; ── Sentinel: signal completion ─────────────────────────────────────
 (write-file sentinel
   (string-format "{}\n{}\n{}\n" instance-id api-hostname public-ip))
