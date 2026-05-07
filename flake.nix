@@ -55,6 +55,14 @@
       url = "github:pleme-io/tatara-lisp";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Typed K3s-AMI surface — services.blackmatter.k3s-ami + lib.k3s-ami.
+    # Fleet-wide source of truth for "produce a K3s AMI". Subsumes the
+    # matrix of (variant × architecture × platform) previously hand-wired
+    # across kindling-profiles + platform-packer.
+    blackmatter-kubernetes = {
+      url = "github:pleme-io/blackmatter-kubernetes";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = {
@@ -186,6 +194,43 @@
         inputs.sops-nix.nixosModules.sops
         ./profiles/k3s-cloud-server
         (amiNodeIdentity system)
+      ];
+    };
+
+    # K3s AMI nixosConfiguration generator — wraps blackmatter-kubernetes'
+    # lib.k3s-ami.mkK3sAmiSystem with our local module aggregator + tatara
+    # overlay + sops-nix + home-manager. arch ∈ { "x86_64" | "aarch64" }.
+    # The platform value is "generic"; the bake driver's SSM target
+    # (/pangea/${platform}/k3s-ami-id) supplies per-platform identity at
+    # bake-promote time. At first boot the bootstrap script reads the
+    # instance tag pleme:k3s:ssm-prefix → SSM → fills in everything else.
+    mkK3sAmiNixosConfig = arch: inputs.blackmatter-kubernetes.lib.k3s-ami.mkK3sAmiSystem {
+      nixpkgs            = inputs.nixpkgs;
+      k3sAmiModule       = inputs.blackmatter-kubernetes.nixosModules.k3s-ami;
+      # blackmatter aggregator already imports k3s + fluxcd modules;
+      # passing them again yields duplicate-declaration errors.
+      blackmatterModule  = inputs.blackmatter.nixosModules.blackmatter;
+      tataraOverlay      = inputs.tatara-lisp.overlays.default;
+      declaration = {
+        variant      = "ssm-runtime";
+        architecture = arch;
+        platform     = "generic";
+        runtime      = { cni = "flannel"; cilium.version = "1.16.4"; };
+        bootstrap    = {
+          # FluxCD wired (gotk-components.yaml baked); URL/branch/path
+          # arrive from SSM at first-boot via gotk-sync.yaml.
+          fluxcd = { enable = true; source = null; sopsPath = null; };
+          imagePullSecrets = [];
+        };
+        ami = {
+          name         = "nixos-k3s-ami-ssm-runtime-${arch}";
+          ssmTarget    = "/pangea/<platform>/k3s-ami-id";
+          instanceType = if arch == "x86_64" then "t3.medium" else "t4g.medium";
+        };
+      };
+      extraModules = [
+        inputs.sops-nix.nixosModules.sops
+        inputs.home-manager.nixosModules.home-manager
       ];
     };
   in {
@@ -617,18 +662,22 @@
     # pangea-architectures/workspaces/platform-packer; bake's NIXOS_PROFILE
     # dispatches here via packer.ami_types.k3s-cloud-server.profile in the
     # platform yaml.
-    nixosConfigurations.k3s-cloud-server-ssm = nixpkgs.lib.nixosSystem {
-      system = "aarch64-linux";
-      modules = [
-        self.nixosModules.default
-        inputs.sops-nix.nixosModules.sops
-        inputs.home-manager.nixosModules.home-manager
-        # tatara-script overlay applied once via self.nixosModules.default
-        # (see top-of-flake aggregator); provides `pkgs.tatara-script`
-        # consumed by k3s-bootstrap.service.
-        ./profiles/k3s-cloud-server-ssm
-      ];
-    };
+    # K3s-AMI nixosConfigurations — derived from the typed
+    # services.blackmatter.k3s-ami module in blackmatter-kubernetes via
+    # lib.k3s-ami.mkK3sAmiSystem. One config per (variant × architecture)
+    # pair. Per-platform values (FluxCD source, image-pull-secrets) are
+    # NOT baked — they flow from SSM at first-boot via the bootstrap
+    # script. Each NIXOS_PROFILE name is what platform-packer's
+    # build-k3s-ami app passes via the kindling-profiles flake ref.
+    #
+    # Naming: `k3s-ami-${variant}-${architecture}` so the ami-forge
+    # reaper (groups by AMI name prefix) keeps each variant separate.
+    # Adding a new (variant, arch) pair = one entry below.
+    nixosConfigurations.k3s-ami-ssm-runtime-x86_64  = mkK3sAmiNixosConfig "x86_64";
+    nixosConfigurations.k3s-ami-ssm-runtime-aarch64 = mkK3sAmiNixosConfig "aarch64";
+    # Backwards-compat alias for callers (platform-packer bakeBody case
+    # statement) that still reference k3s-cloud-server-ssm by name.
+    nixosConfigurations.k3s-cloud-server-ssm = mkK3sAmiNixosConfig "aarch64";
 
     # NixOS configuration for Packer-based Attic AMI builds (nixos-rebuild switch target)
     nixosConfigurations.attic-builder = nixpkgs.lib.nixosSystem {
@@ -911,24 +960,18 @@
       # to /pangea/akeyless-dev/nixos-ami-id which had no consumers —
       # operator had to hand-copy after every bake. One key, one path,
       # zero drift.
-      k3sPipeline = amiBuild.mkAmiBuildPipeline {
-        forgePackage = inputs.ami-forge.packages.aarch64-darwin.default;
-        buildTemplate = self.packages.aarch64-darwin.build-template;
-        testTemplate = self.packages.aarch64-darwin.test-template;
-        ssmParameter = "/pangea/pleme/k3s-ami-id";
-        amiName = "nixos-k3s-cloud-server";
-        awsProfile = "akeyless-development";
-        # Cluster test is disabled per the comment above. The Phase-4
-        # multi-node test references a hardcoded IAM instance profile
-        # `ami-forge-test-instance-profile` that's not provisioned in
-        # akeyless-development; on failure the pipeline rotates (deregisters
-        # the freshly-baked AMI). Real validation happens via cluster
-        # deploy + wake/sleep cycles. Re-enable once the test IAM is
-        # paved by Pangea + skip_nix_rebuild interaction is fixed.
-        skipClusterTest = true;
-        # Ephemeral Attic cache — boot from last AMI, use as substituter, snapshot after
-        atticSsm = "/pangea/attic-cache/nixos-ami-id";
-      };
+      # ── Legacy K3s bake pipelines REMOVED ───────────────────────────
+      # The k3sPipeline + k3sLayeredPipeline used to live here. They've
+      # been replaced by the canonical, platform-aware bake driver in
+      # pangea-architectures/workspaces/platform-packer/#build-k3s-ami,
+      # which:
+      #   * reads architecture + profile from the platform yaml
+      #   * targets the typed nixosConfiguration k3s-ami-ssm-runtime-${arch}
+      #     (defined below; backed by services.blackmatter.k3s-ami)
+      #   * promotes to /pangea/${platform}/k3s-ami-id directly
+      # See blackmatter-kubernetes/module/nixos/k3s-ami/ for the typed
+      # surface; see pangea-architectures/workspaces/platform-packer for
+      # the canonical bake entrypoint.
 
       # Attic cache server AMI pipeline (no K3s, no cluster test)
       atticPipeline = amiBuild.mkAmiBuildPipeline {
@@ -952,42 +995,10 @@
         atticSsm = "/pangea/attic-cache/nixos-ami-id";
       };
 
-      # Multi-layer K3s AMI pipeline — each layer checkpointed in SSM
-      k3sLayeredPipeline = amiBuild.mkMultiLayerPipeline {
-        forgePackage = inputs.ami-forge.packages.aarch64-darwin.default;
-        layers = [
-          {
-            template = self.packages.aarch64-darwin.layer-1-template;
-            name = "layer-1-nix-store";
-            ssmParameter = "/pangea/ami-layers/k3s-cloud-server/layer-1";
-            fingerprintInputs = [ "${self}/flake.lock" ];
-          }
-          {
-            template = self.packages.aarch64-darwin.layer-2-template;
-            name = "layer-2-activated";
-            ssmParameter = "/pangea/ami-layers/k3s-cloud-server/layer-2";
-          }
-          {
-            template = self.packages.aarch64-darwin.layer-3-template;
-            name = "layer-3-release";
-            ssmParameter = "/pangea/ami-layers/k3s-cloud-server/layer-3";
-          }
-        ];
-        testLayers = [
-          {
-            template = self.packages.aarch64-darwin.test-template;
-            name = "test-basic";
-          }
-        ];
-        promoteSsm = "/pangea/pleme/k3s-ami-id";
-        amiName = "nixos-k3s-cloud-server";
-        awsProfile = "akeyless-development";
-        atticSsm = "/pangea/attic-cache/nixos-ami-id";
-      };
-    in k3sPipeline // {
-      # Multi-layer pipeline (replaces monolithic build when validated)
-      ami-build-layered = k3sLayeredPipeline.ami-build;
-      ami-status-layered = k3sLayeredPipeline.ami-status;
+      # k3sLayeredPipeline removed alongside k3sPipeline — the canonical
+      # bake path is platform-packer#build-k3s-ami.
+    in {
+      # Attic cache pipeline apps
       attic-ami-build = atticPipeline.ami-build;
       attic-ami-test = atticPipeline.ami-test;
       attic-ami-status = atticPipeline.ami-status;
