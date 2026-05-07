@@ -918,7 +918,14 @@
         ssmParameter = "/pangea/pleme/k3s-ami-id";
         amiName = "nixos-k3s-cloud-server";
         awsProfile = "akeyless-development";
-        clusterTestConfig = self.packages.aarch64-darwin.cluster-test-config;
+        # Cluster test is disabled per the comment above. The Phase-4
+        # multi-node test references a hardcoded IAM instance profile
+        # `ami-forge-test-instance-profile` that's not provisioned in
+        # akeyless-development; on failure the pipeline rotates (deregisters
+        # the freshly-baked AMI). Real validation happens via cluster
+        # deploy + wake/sleep cycles. Re-enable once the test IAM is
+        # paved by Pangea + skip_nix_rebuild interaction is fixed.
+        skipClusterTest = true;
         # Ephemeral Attic cache — boot from last AMI, use as substituter, snapshot after
         atticSsm = "/pangea/attic-cache/nixos-ami-id";
       };
