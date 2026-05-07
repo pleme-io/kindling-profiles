@@ -191,7 +191,18 @@
   in {
     # Module exports — each target type imports the node identity interface
     darwinModules.default = {imports = [./modules/node-identity.nix];};
-    nixosModules.default = {imports = [./modules/node-identity.nix inputs.blackmatter.nixosModules.blackmatter];};
+    # Aggregator NixOS module. Every kindling-profiles AMI builder imports
+    # this once and inherits: node-identity option surface, blackmatter
+    # component surface, and the tatara-lisp overlay (so
+    # `pkgs.tatara-script` exists fleet-wide — required by
+    # `blackmatter.components.tatara-script.enable = true` which is
+    # mkDefault on the blackmatter NixOS module). One place, no
+    # per-config duplication, no system-specific selection (the overlay
+    # is system-aware via `final`).
+    nixosModules.default = { ... }: {
+      imports = [./modules/node-identity.nix inputs.blackmatter.nixosModules.blackmatter];
+      nixpkgs.overlays = [ inputs.tatara-lisp.overlays.default ];
+    };
     homeManagerModules.default = {imports = [./modules/node-identity.nix];};
 
     # AMI packages — for local testing with nixos-generators
@@ -559,17 +570,9 @@
         # in Pangea::Architectures::Portao as the AWS-side backstop for
         # the hub's own systemd watchdog timer.
         "${inputs.substrate}/lib/infra/cloudwatch-metric-publisher.nix"
-        # tatara-script overlay — provides `pkgs.tatara-script` so the
-        # portao profile's first-boot `portao-userdata.service` can
-        # invoke a typed .tlisp script instead of a writeShellApplication.
-        # The .tlisp file lives next to its consumer (profiles/portao/).
-        ({ ... }: {
-          nixpkgs.overlays = [
-            (final: _prev: {
-              tatara-script = inputs.tatara-lisp.packages.x86_64-linux.tatara-script;
-            })
-          ];
-        })
+        # tatara-script overlay applied once via self.nixosModules.default
+        # (top-of-flake aggregator); provides `pkgs.tatara-script` for
+        # portao-userdata.service.
         ./profiles/portao
         ./profiles/aws-node-base
         (amiNodeIdentity "x86_64-linux")
@@ -620,16 +623,9 @@
         self.nixosModules.default
         inputs.sops-nix.nixosModules.sops
         inputs.home-manager.nixosModules.home-manager
-        # tatara-script overlay — provides `pkgs.tatara-script` so the
-        # k3s-cloud-server-ssm profile's first-boot k3s-bootstrap.service
-        # can invoke a typed .tlisp script instead of writeShellApplication.
-        ({ ... }: {
-          nixpkgs.overlays = [
-            (final: _prev: {
-              tatara-script = inputs.tatara-lisp.packages.aarch64-linux.tatara-script;
-            })
-          ];
-        })
+        # tatara-script overlay applied once via self.nixosModules.default
+        # (see top-of-flake aggregator); provides `pkgs.tatara-script`
+        # consumed by k3s-bootstrap.service.
         ./profiles/k3s-cloud-server-ssm
       ];
     };
