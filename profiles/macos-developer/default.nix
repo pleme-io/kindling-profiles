@@ -31,7 +31,7 @@
   ...
 }: let
   ni = config.kindling.nodeIdentity;
-  blzsh = inputs.blackmatter-shell.packages.${pkgs.system}.blzsh;
+  blzsh = inputs.blackmatter-shell.packages.${pkgs.stdenv.hostPlatform.system}.blzsh;
   homeDir = "/Users/${ni.user.name}";
 in {
   imports = [
