@@ -139,11 +139,11 @@
         "tatara-lisp": "tatara-lisp"
       },
       "locked": {
-        "lastModified": 1778544886,
-        "narHash": "sha256-l9f1cbfQTymVJyq/E/DGSg4UmFPSk996mR7XVPNMSbg=",
+        "lastModified": 1778546208,
+        "narHash": "sha256-2WKcuvnAUCnF9fJioYjKAnmMSHTRfyxkDi7L2JqbgQM=",
         "owner": "pleme-io",
         "repo": "blackmatter",
-        "rev": "c1455a73a94331ca9b8199bfaf967a219dba08a9",
+        "rev": "383246846000223626a7cf0a900d383e338e0f0e",
         "type": "github"
       },
       "original": {
@@ -414,11 +414,11 @@
         "substrate": "substrate_16"
       },
       "locked": {
-        "lastModified": 1778543788,
-        "narHash": "sha256-AhFED9r4RfZArfA4UyygL9LSEtEs1anebCQBPj/L4K4=",
+        "lastModified": 1778546156,
+        "narHash": "sha256-WJEIP5bdAE5kwIDYSVjXTurjYlSjudJKfMi5pauMrMk=",
         "owner": "pleme-io",
         "repo": "blackmatter-kubernetes",
-        "rev": "c86eaa5a00a30255865fbd9f1fc93a08d7d4a7c1",
+        "rev": "911d01c6227ea243674a164af3c9b39017e782b1",
         "type": "github"
       },
       "original": {
@@ -439,16 +439,16 @@
         "substrate": "substrate_35"
       },
       "locked": {
-        "lastModified": 1778546156,
-        "narHash": "sha256-WJEIP5bdAE5kwIDYSVjXTurjYlSjudJKfMi5pauMrMk=",
+        "lastModified": 1778557122,
+        "narHash": "sha256-pWYsSG1LJ9E27iSdmkiva9RFG1zUtU/VEHh8EmuOTxw=",
         "owner": "pleme-io",
         "repo": "blackmatter-kubernetes",
-        "rev": "911d01c6227ea243674a164af3c9b39017e782b1",
+        "rev": "164be2f2fcf47cb756f6f4da2ca379147cdd70a9",
         "type": "github"
       },
       "original": {
         "owner": "pleme-io",
-        "ref": "911d01c",
+        "ref": "164be2f",
         "repo": "blackmatter-kubernetes",
         "type": "github"
       }
@@ -9499,11 +9499,11 @@
         "rust-overlay": "rust-overlay_31"
       },
       "locked": {
-        "lastModified": 1778542594,
-        "narHash": "sha256-V7GM98EPmHzh83tg1BCep7aIKu3T+rPRSuf3WGF5eT8=",
+        "lastModified": 1778546030,
+        "narHash": "sha256-Fsly+oPQRmfwMCovH4qCkhjHnTi7k3KUwS1o16Qj5Lk=",
         "owner": "cachix",
         "repo": "devenv",
-        "rev": "0f26a3fcd2743757fc60c8ce588e9398f0ad32d7",
+        "rev": "bc9c0ba8d505476908739dbc5706e06b76afd091",
         "type": "github"
       },
       "original": {
