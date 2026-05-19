@@ -37204,11 +37204,11 @@
         "substrate": "substrate_37"
       },
       "locked": {
-        "lastModified": 1779199903,
-        "narHash": "sha256-l7zOyCmAFOzzLRN8e9H9e2N45doLoFUQ+a05Yk41q/c=",
+        "lastModified": 1779205286,
+        "narHash": "sha256-Pl5e6/GhIpOpZIYEcl049Ui7nWiIDum83m/0VaybL2o=",
         "owner": "pleme-io",
         "repo": "kindling",
-        "rev": "62f2322d821780278d1fd55d26abf62ab2f2d987",
+        "rev": "5c38170613263a102ccfcb44098b321cd0f52fd3",
         "type": "github"
       },
       "original": {
