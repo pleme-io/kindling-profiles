@@ -139,11 +139,11 @@
         "tatara-lisp": "tatara-lisp"
       },
       "locked": {
-        "lastModified": 1779275166,
-        "narHash": "sha256-9ZT/M+pVek5d+vUlCT+mmVe7wODTfGYae4MPKe9BX7g=",
+        "lastModified": 1779279319,
+        "narHash": "sha256-/yrgB3WAMWNtoijObEm+yG0od/3e3/hBzQO4+IC8Jr0=",
         "owner": "pleme-io",
         "repo": "blackmatter",
-        "rev": "faea767f7e93a1c1e288842c96d7b3b005fecd01",
+        "rev": "4998d4e4d0c438f83d3abc22f5b00372145ba65e",
         "type": "github"
       },
       "original": {
@@ -310,11 +310,11 @@
         "workspace-config": "workspace-config"
       },
       "locked": {
-        "lastModified": 1779271280,
-        "narHash": "sha256-7O5t/EyCFtWWYxPj2+3Kpg4T5MkbchCTvmT5/bxbRoI=",
+        "lastModified": 1779275178,
+        "narHash": "sha256-Nw1FpMXiQBjyWU6aOJJ4j0+NWoq429N2xhyCAcuVT1Y=",
         "owner": "pleme-io",
         "repo": "blackmatter-ghostty",
-        "rev": "9ca580eb4a4323cfe085e7ceb0015fa1f8ecd9ae",
+        "rev": "f211b1ca7f065c12473473f18aced0ee5e9d954e",
         "type": "github"
       },
       "original": {
@@ -412,11 +412,11 @@
         "substrate": "substrate_13"
       },
       "locked": {
-        "lastModified": 1779273628,
-        "narHash": "sha256-y3DKuWZq59MMv9ogvcFGvfEn9ejsWdoIGBGV8ixrWvM=",
+        "lastModified": 1779277414,
+        "narHash": "sha256-IM8ZqwYKjsjCWviYDec0efI+0Eh37EUnTGVR1tQ/uP8=",
         "owner": "pleme-io",
         "repo": "blackmatter-kubernetes",
-        "rev": "2d08ec868c835701f7bbec84d40fe0938783ae45",
+        "rev": "7272a8061fb7dd3a6039f66ea7b20cbcaf60c2c8",
         "type": "github"
       },
       "original": {
@@ -11479,11 +11479,11 @@
         "rust-overlay": "rust-overlay_11"
       },
       "locked": {
-        "lastModified": 1779197029,
-        "narHash": "sha256-qlllWT8SDf1cLkDmnF70e/yeCYf+CI9kanHXpHQHjqU=",
+        "lastModified": 1779273607,
+        "narHash": "sha256-QqgteVqPEjnobVskqkQZe5qGmON0/JvbbL5D2Fu7g8o=",
         "owner": "cachix",
         "repo": "devenv",
-        "rev": "ced95934010f429be4d4c84a65ab8d15bc7344c5",
+        "rev": "f9bd46ffc148466001c7cf3e6cbc0fd665f72910",
         "type": "github"
       },
       "original": {
@@ -11510,11 +11510,11 @@
         "rust-overlay": "rust-overlay_12"
       },
       "locked": {
-        "lastModified": 1779197029,
-        "narHash": "sha256-qlllWT8SDf1cLkDmnF70e/yeCYf+CI9kanHXpHQHjqU=",
+        "lastModified": 1779273607,
+        "narHash": "sha256-QqgteVqPEjnobVskqkQZe5qGmON0/JvbbL5D2Fu7g8o=",
         "owner": "cachix",
         "repo": "devenv",
-        "rev": "ced95934010f429be4d4c84a65ab8d15bc7344c5",
+        "rev": "f9bd46ffc148466001c7cf3e6cbc0fd665f72910",
         "type": "github"
       },
       "original": {
@@ -11739,11 +11739,11 @@
         "rust-overlay": "rust-overlay_19"
       },
       "locked": {
-        "lastModified": 1779197029,
-        "narHash": "sha256-qlllWT8SDf1cLkDmnF70e/yeCYf+CI9kanHXpHQHjqU=",
+        "lastModified": 1779273607,
+        "narHash": "sha256-QqgteVqPEjnobVskqkQZe5qGmON0/JvbbL5D2Fu7g8o=",
         "owner": "cachix",
         "repo": "devenv",
-        "rev": "ced95934010f429be4d4c84a65ab8d15bc7344c5",
+        "rev": "f9bd46ffc148466001c7cf3e6cbc0fd665f72910",
         "type": "github"
       },
       "original": {
@@ -12620,11 +12620,11 @@
         "rust-overlay": "rust-overlay_43"
       },
       "locked": {
-        "lastModified": 1779273607,
-        "narHash": "sha256-QqgteVqPEjnobVskqkQZe5qGmON0/JvbbL5D2Fu7g8o=",
+        "lastModified": 1779276618,
+        "narHash": "sha256-uLPy0ZQz2zUiA5AoCm+LbwhXnTe7WGG5Xf194Dg0kHs=",
         "owner": "cachix",
         "repo": "devenv",
-        "rev": "f9bd46ffc148466001c7cf3e6cbc0fd665f72910",
+        "rev": "d47f6e9f3b64049c4701c0443ad0c8dced81f407",
         "type": "github"
       },
       "original": {
@@ -13063,11 +13063,11 @@
         "rust-overlay": "rust-overlay_56"
       },
       "locked": {
-        "lastModified": 1779273607,
-        "narHash": "sha256-QqgteVqPEjnobVskqkQZe5qGmON0/JvbbL5D2Fu7g8o=",
+        "lastModified": 1779276618,
+        "narHash": "sha256-uLPy0ZQz2zUiA5AoCm+LbwhXnTe7WGG5Xf194Dg0kHs=",
         "owner": "cachix",
         "repo": "devenv",
-        "rev": "f9bd46ffc148466001c7cf3e6cbc0fd665f72910",
+        "rev": "d47f6e9f3b64049c4701c0443ad0c8dced81f407",
         "type": "github"
       },
       "original": {
@@ -16085,11 +16085,11 @@
         "rust-analyzer-src": "rust-analyzer-src_13"
       },
       "locked": {
-        "lastModified": 1779185128,
-        "narHash": "sha256-Kl2bkmwZJD3n2KWDxuIlturZ7emqRK+anpD1LmDwpmY=",
+        "lastModified": 1779270500,
+        "narHash": "sha256-r60KTphdevmdIDz1iJ529HvcpOq082ZZ1OnN3jDnrqk=",
         "owner": "nix-community",
         "repo": "fenix",
-        "rev": "b7bd9323fe26a3b4f4bddbb2c2a1dacabced2f88",
+        "rev": "848395a91def85c11694587636151d89555f1ddb",
         "type": "github"
       },
       "original": {
@@ -55098,11 +55098,11 @@
     "rust-analyzer-src_13": {
       "flake": false,
       "locked": {
-        "lastModified": 1779074864,
-        "narHash": "sha256-0M3WqsWmtXmv9Ev/vnFfCHosWvISDwiuuhQ104UO3CI=",
+        "lastModified": 1779221047,
+        "narHash": "sha256-HkOWI9C4kxA6xkS9GXhe4hAAme7ekOWje3b1U7rLSIo=",
         "owner": "rust-lang",
         "repo": "rust-analyzer",
-        "rev": "cdfe408d4b436e806ff525cb3e67588a6a009ed1",
+        "rev": "f4bd646a7867c7814770168e0d4b9bd3418c1066",
         "type": "github"
       },
       "original": {
@@ -60981,11 +60981,11 @@
         "substrate": "substrate_11"
       },
       "locked": {
-        "lastModified": 1779270697,
-        "narHash": "sha256-eycz9d1Xf4qw/5S5o4v+cGtreFMAIApEuFcM7FAuVDE=",
+        "lastModified": 1779274124,
+        "narHash": "sha256-vVieG9HkQLeF6dVpHOde5fXzKIIFmqqbOkFe9YSNb0w=",
         "owner": "pleme-io",
         "repo": "workspace-config",
-        "rev": "bb08964f823c86ecf7e8193005f76f221d1ffca7",
+        "rev": "f1f8d261aa5bfdd758d37dcb0972b76916104da0",
         "type": "github"
       },
       "original": {
