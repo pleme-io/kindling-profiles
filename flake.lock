@@ -139,11 +139,11 @@
         "tatara-lisp": "tatara-lisp"
       },
       "locked": {
-        "lastModified": 1779250949,
-        "narHash": "sha256-g40wCRuEj9vGRTo6fAT7gzf32FO5ZBF2vifncbxq1zY=",
+        "lastModified": 1779254976,
+        "narHash": "sha256-8sSyBHCo8IgyBoII76qhrykKX72x2VoLTYjqSKjwMaU=",
         "owner": "pleme-io",
         "repo": "blackmatter",
-        "rev": "fe03291b28ce63b367c9092aff362fe530cda0b7",
+        "rev": "fd73fae53003035f16ce308b98f6c628487216cc",
         "type": "github"
       },
       "original": {
@@ -495,11 +495,11 @@
         "substrate": "substrate_14"
       },
       "locked": {
-        "lastModified": 1779244503,
-        "narHash": "sha256-ytXUstjg4eK3ELgIQZnKwtxM8PCEuL33r2GRFtMbjOo=",
+        "lastModified": 1779250712,
+        "narHash": "sha256-FjxD+lXu7n4qAG871SlgK3/ZjyCLbNb9KmCRAUTnix4=",
         "owner": "pleme-io",
         "repo": "blackmatter-macos",
-        "rev": "827d56dd143b0f56cbc27cd50b4c07eec105bf91",
+        "rev": "c1a28ba432a9af867f105e20cc39a980c0cdce4a",
         "type": "github"
       },
       "original": {
@@ -781,11 +781,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1779203390,
-        "narHash": "sha256-jxbd4NVT+iaPHqp4jM1BuXHjIDHKfa/VxwM4TIJ9qqs=",
+        "lastModified": 1779244705,
+        "narHash": "sha256-0l+6zD1P7TY4mkm03oaPP7nYuOvJ+4IlrAS2crHqV2o=",
         "owner": "pleme-io",
         "repo": "blackmatter-zig",
-        "rev": "18ec6bb0b81b0bf4afb24e1467937b2f239d6247",
+        "rev": "ea14d4493d2786dd9dd492ecbfbb11eea704b355",
         "type": "github"
       },
       "original": {
@@ -54998,11 +54998,11 @@
         "tatara": "tatara"
       },
       "locked": {
-        "lastModified": 1779248683,
-        "narHash": "sha256-DFl/m4yKzds8tITu5OEJmfrk4d+ufShY5CESnLYdlIM=",
+        "lastModified": 1779252894,
+        "narHash": "sha256-2Zl4LHbCyrXK9/dG6Qog6QujMyPc1NjTYkXseMJM8kk=",
         "ref": "refs/heads/main",
-        "rev": "4415a0f7349c532f03e201e5e7a29fb1a0fa895a",
-        "revCount": 111,
+        "rev": "5ba37a6aa359c208061acaa645ca22c77cc07cd9",
+        "revCount": 112,
         "type": "git",
         "url": "ssh://git@github.com/pleme-io/repo-forge"
       },
