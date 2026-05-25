@@ -139,11 +139,11 @@
         "tatara-lisp": "tatara-lisp"
       },
       "locked": {
-        "lastModified": 1779684813,
-        "narHash": "sha256-Qh+pI8IVG+wTKE33wuWGema6zfXddIou7eKZKLYGuqY=",
+        "lastModified": 1779698586,
+        "narHash": "sha256-dHAeWRwKQvoImKrW7Pzl1UxyZBEykJlZGZ1Vn2JqYYk=",
         "owner": "pleme-io",
         "repo": "blackmatter",
-        "rev": "892843ba37148bcef491c94a56ee760021fe7f7a",
+        "rev": "fabe7027964884eace94cc492f965c17f66d8fef",
         "type": "github"
       },
       "original": {
@@ -55773,11 +55773,11 @@
         "tatara": "tatara"
       },
       "locked": {
-        "lastModified": 1779681326,
-        "narHash": "sha256-58vpdfgOBhXHXNeolpjBicEQvlPaxn59DQHyS9AIkpE=",
+        "lastModified": 1779684777,
+        "narHash": "sha256-/beKUhAFC+kXdT7r59faFt/JW0JPEFtLvlsM0CwNq68=",
         "ref": "refs/heads/main",
-        "rev": "0f20ab9207261f5081a67a33127437ceb15e2fea",
-        "revCount": 136,
+        "rev": "93cd82a217b9ff07c3ad25732c10cabdb1305f17",
+        "revCount": 137,
         "type": "git",
         "url": "ssh://git@github.com/pleme-io/repo-forge"
       },
@@ -60292,11 +60292,11 @@
         "substrate": "substrate_34"
       },
       "locked": {
-        "lastModified": 1779683374,
-        "narHash": "sha256-FETSHbDyHonZ3IUELmlrsN2kpTCOqPY8xIvtuRel0Nw=",
+        "lastModified": 1779693109,
+        "narHash": "sha256-gbKBXgXcKQjGTGI0xaxj3jP8NysOyi7zCTmvSAUFfuk=",
         "owner": "pleme-io",
         "repo": "tatara-lisp",
-        "rev": "264e45e92a251f25c41613b4f4c283b53cd52875",
+        "rev": "f9d3c289df6227732bc4543e26e55aa0ffe437ae",
         "type": "github"
       },
       "original": {
