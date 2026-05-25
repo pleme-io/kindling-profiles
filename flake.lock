@@ -60315,11 +60315,11 @@
         "substrate": "substrate_39"
       },
       "locked": {
-        "lastModified": 1779683374,
-        "narHash": "sha256-FETSHbDyHonZ3IUELmlrsN2kpTCOqPY8xIvtuRel0Nw=",
+        "lastModified": 1779693109,
+        "narHash": "sha256-gbKBXgXcKQjGTGI0xaxj3jP8NysOyi7zCTmvSAUFfuk=",
         "owner": "pleme-io",
         "repo": "tatara-lisp",
-        "rev": "264e45e92a251f25c41613b4f4c283b53cd52875",
+        "rev": "f9d3c289df6227732bc4543e26e55aa0ffe437ae",
         "type": "github"
       },
       "original": {
