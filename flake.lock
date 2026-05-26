@@ -139,11 +139,11 @@
         "tatara-lisp": "tatara-lisp"
       },
       "locked": {
-        "lastModified": 1779749195,
-        "narHash": "sha256-udbG0bTI4wsnrco2oyf1FwylGl7z9MWCjAhxo8PjXak=",
+        "lastModified": 1779755485,
+        "narHash": "sha256-P7OQBCOPILhdTTp2Ja2pKijh/6Va9ZDRcuY2/m5YwoQ=",
         "owner": "pleme-io",
         "repo": "blackmatter",
-        "rev": "cf712dd456a86ba2488f14e86eddd3a27ab9e093",
+        "rev": "a4a181bec3db589c8bb59f1f37ade8a1285e4521",
         "type": "github"
       },
       "original": {
@@ -12768,11 +12768,11 @@
         "rust-overlay": "rust-overlay_43"
       },
       "locked": {
-        "lastModified": 1779717400,
-        "narHash": "sha256-B/jXOCq7m0TlWp1J1mVwlk4qSz4gSa25kDf1D0HqG88=",
+        "lastModified": 1779749056,
+        "narHash": "sha256-AtocdrunzuxTvSDn+82RntEhrs6TicM6Z4/zNQS9KKg=",
         "owner": "cachix",
         "repo": "devenv",
-        "rev": "3fe1f122a2884a6995014d952d039367d6d77001",
+        "rev": "099ac65fcef79e88127bdc06adbd1ea94255274a",
         "type": "github"
       },
       "original": {
