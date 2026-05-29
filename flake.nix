@@ -60,7 +60,7 @@
     # matrix of (variant × architecture × platform) previously hand-wired
     # across kindling-profiles + platform-packer.
     blackmatter-kubernetes = {
-      url = "github:pleme-io/blackmatter-kubernetes/99ba10a";
+      url = "github:pleme-io/blackmatter-kubernetes";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
