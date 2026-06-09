@@ -2,14 +2,13 @@
   description = "kindling-profiles — reusable machine profiles for kindling fleet management";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    nixpkgs.follows = "substrate/nixpkgs";
     blackmatter = {
       url = "github:pleme-io/blackmatter";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     substrate = {
       url = "github:pleme-io/substrate";
-      inputs.nixpkgs.follows = "nixpkgs";
     };
     nixos-generators = {
       url = "github:nix-community/nixos-generators";
