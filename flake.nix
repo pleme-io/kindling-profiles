@@ -1015,6 +1015,7 @@
       k3s-cloud-server = ./profiles/k3s-cloud-server;
       k8s-cloud-server = ./profiles/k8s-cloud-server;
       attic-server = ./profiles/attic-server;
+      shaar-concentrator = ./profiles/shaar-concentrator;
     };
 
     # Profile metadata — used by `kindling profile list/show`
@@ -1048,6 +1049,11 @@
         description = "NixOS Attic binary cache server for storing Nix build artifacts with PostgreSQL and local storage";
         platform = "linux";
         components = ["attic-server" "postgresql" "firewall"];
+      };
+      shaar-concentrator = {
+        description = "NixOS Shaar (akeyless-vpn) WireGuard concentrator — server tunnel, address pool, /sync admission webhook, nftables MASQUERADE + default-deny reach filter";
+        platform = "linux";
+        components = ["shaar-concentrator" "wireguard" "nftables" "firewall"];
       };
     };
   };
