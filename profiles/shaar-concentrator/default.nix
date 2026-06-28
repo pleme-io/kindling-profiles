@@ -14,11 +14,13 @@
 # /sync webhook to admit/revoke clients.
 #
 # Cloud-init contract (the per-instance `public_endpoint` — the EIP ip:port —
-# is the one value not known at bake time): a first-boot resolver (a
-# portao-userdata sibling owned by the cloud-init / Pangea layer) renders the
-# final config at `/run/shaar-concentrator/config.yaml` and the module is
-# pointed at it via `configFile`, OR `publicEndpoint` is set directly when the
-# EIP is known at eval time. See modules/shaar-concentrator.nix header.
+# is the one value not known at bake time): the Pangea ShaarConcentrator
+# user_data writes the `SHAAR_*` keys to `/etc/shaar/env`; the module's default
+# `firstBootResolver` runs the binary's `init` subcommand as an ExecStartPre
+# that reads that env + the instance public IP (IMDS, or `SHAAR_PUBLIC_IP`) and
+# renders the final config at `/run/shaar-concentrator/config.yaml`, which the
+# server loads via `--config`. The binary owns the resolver logic (NO SHELL).
+# See modules/shaar-concentrator.nix header.
 #
 # What clones from portao:
 #   * amazon-image.nix base (no blizzard hardware module — its swapDevices /
@@ -50,18 +52,19 @@ in {
 
   # ── The concentrator (the binary owns the logic) ────────────────────
   # Fleet defaults per the akeyless-dev deployment: pool 10.99.0.0/24, target
-  # 10.0.0.0/16, WireGuard UDP 51822, /sync webhook on 8200. `publicEndpoint`
-  # stays null here — it is the one per-instance value resolved at first boot
-  # (see the header). `package` is left to its default (`pkgs.shaar-concentrator`
-  # from the akeyless-vpn overlay); the AMI builder wires it explicitly.
+  # 10.0.0.0/16, WireGuard UDP 51822, /sync webhook on 8080 (the shared
+  # SHAAR_WEBHOOK_PORT contract default). `publicEndpoint` stays null — it is the
+  # one per-instance value resolved at first boot by the binary's `init`
+  # ExecStartPre (the module default `firstBootResolver`; `configFile` stays null
+  # so the init resolver owns rendering `/run/shaar-concentrator/config.yaml`).
+  # `package` is left to its default (`pkgs.shaar-concentrator` from the
+  # akeyless-vpn overlay); the AMI builder wires it explicitly.
   pleme.nixos.shaarConcentrator = {
     enable = true;
     poolCidr = lib.mkDefault "10.99.0.0/24";
     targetCidrs = lib.mkDefault ["10.0.0.0/16"];
     listenPort = lib.mkDefault 51822;
-    webhookPort = lib.mkDefault 8200;
-    # The cloud-init resolver renders this with the per-instance EIP ip:port.
-    configFile = lib.mkDefault "/run/shaar-concentrator/config.yaml";
+    webhookPort = lib.mkDefault 8080;
   };
 
   # ── Amazon AMI base ─────────────────────────────────────────────────

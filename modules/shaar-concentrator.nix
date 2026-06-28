@@ -22,21 +22,28 @@
 #         the CIDRs its lease granted) are written by the concentrator binary
 #         later — see the design note on `forward` below.
 #   * A root systemd service running the `shaar-concentrator` binary from the
-#     akeyless-vpn flake (`--config <store-path>`), with the persisted identity
-#     dir, network ordering, and RequiresMountsFor on the state dir.
+#     akeyless-vpn flake. By default (`firstBootResolver`) it first runs the
+#     binary's `init` subcommand as an `ExecStartPre` (reads `/etc/shaar/env` +
+#     the instance public IP, writes `/run/shaar-concentrator/config.yaml`),
+#     then loads that rendered file via `--config`. Carries the persisted
+#     identity dir, network ordering, and RequiresMountsFor on the state dir.
 #   * Host firewall openings: the WireGuard UDP listen port + the /sync webhook
 #     TCP port.
 #
-# What this module does NOT own (out of scope — the cloud-init / Pangea layer):
-#   * Per-instance `public_endpoint` resolution. The lease embeds the hub's
-#     public `ip:port`, which is not known at AMI bake time and which the
-#     binary's `validate()` requires to be an `ip:port` SocketAddr (NOT a
-#     hostname). Set `publicEndpoint` to the allocated EIP `ip:port` when it is
-#     known at eval time, or point `configFile` at a path a first-boot resolver
-#     (a portao-userdata sibling owned by the cloud-init layer) renders. When
-#     neither is set, the static config is still rendered and the service
-#     fail-fasts on the missing field — surfaced via `config.warnings`, never
-#     silently wrong.
+# How per-instance `public_endpoint` is resolved (the first-boot init flow):
+#   * The lease embeds the hub's public `ip:port`, which is not known at AMI
+#     bake time and which the binary's `validate()` requires to be an `ip:port`
+#     SocketAddr (NOT a hostname). The default `firstBootResolver` path runs the
+#     binary's `init` subcommand as an `ExecStartPre`: it reads the `SHAAR_*`
+#     keys the Pangea ShaarConcentrator user_data writes to `/etc/shaar/env`
+#     (loaded as a systemd `EnvironmentFile`) plus the instance public IP
+#     (`SHAAR_PUBLIC_IP` override, else IMDS) and renders
+#     `/run/shaar-concentrator/config.yaml`, which the `ExecStart` then loads via
+#     `--config`. The binary owns all the resolver logic (NO SHELL — one Exec
+#     line). Set `publicEndpoint` (eval-time EIP) or `configFile` (an externally
+#     pre-rendered path) to bypass the resolver; disabling `firstBootResolver`
+#     with neither set fail-fasts on the missing field — surfaced via
+#     `config.warnings`, never silently wrong.
 #
 # TYPED EMISSION: the YAML config is emitted by `pkgs.formats.yaml` from a typed
 # Nix attrset (no `format!()`, no hand-written YAML). The nftables ruleset is
@@ -83,12 +90,37 @@
 
   renderedConfigFile = settingsFormat.generate "shaar-concentrator.yaml" renderedConfig;
 
-  # The config the service actually loads: a first-boot-rendered file if
-  # `configFile` is set, otherwise the Nix-rendered static config.
+  # The pinned runtime config path the first-boot `init` resolver writes and the
+  # `--config` flag loads — ONE source of truth so `--out` and `--config` can
+  # never drift. RuntimeDirectory (in the unit, below) creates `/run/<dir>` 0700.
+  runtimeDirName = "shaar-concentrator";
+  runtimeConfigPath = "/run/${runtimeDirName}/config.yaml";
+
+  # The config the `--config` flag loads. Precedence:
+  #   1. `configFile` — an explicit externally-rendered target path — wins;
+  #   2. else `firstBootResolver` (default): the `init` subcommand renders
+  #      `runtimeConfigPath` at ExecStartPre and `--config` loads it;
+  #   3. else the Nix-rendered static store config (needs `publicEndpoint`).
   effectiveConfig =
     if cfg.configFile != null
     then cfg.configFile
+    else if cfg.firstBootResolver
+    then runtimeConfigPath
     else renderedConfigFile;
+
+  # True when THIS module renders the runtime config (the default cloud path):
+  # firstBootResolver on AND no explicit `configFile` override. Gates the
+  # ExecStartPre `init` call, RuntimeDirectory, and the `/etc/shaar/env` load.
+  useInitResolver = cfg.firstBootResolver && cfg.configFile == null;
+
+  # systemd EnvironmentFile list: the optional webhook-bearer file (existing) +
+  # the SHAAR_* env file the `init` resolver reads (the Pangea user_data writes
+  # it to `environmentFile`). The env file is `-`-prefixed (optional) so a first
+  # boot before user_data has written it does NOT block the unit — the `init`
+  # subcommand falls back to its contract defaults + IMDS for the public IP.
+  envFiles =
+    lib.optional (cfg.credentialsFile != null) cfg.credentialsFile
+    ++ lib.optional (useInitResolver && cfg.environmentFile != null) "-${cfg.environmentFile}";
 
   # ── nftables ruleset (family ip — pool + target are IPv4) ──────────────
   # MASQUERADE: rewrite pool-sourced packets bound for a target CIDR to the
@@ -171,8 +203,13 @@ in {
 
     webhookPort = lib.mkOption {
       type = lib.types.port;
-      default = 8200;
-      description = "The TCP port the /sync webhook binds (opened on the host firewall).";
+      default = 8080;
+      description = ''
+        The TCP port the /sync webhook binds (opened on the host firewall). Matches
+        the shared `SHAAR_WEBHOOK_PORT` contract default (8080) so the firewall
+        opening and the `init`-resolved `webhook_bind` agree — keep this in sync
+        with the `SHAAR_WEBHOOK_PORT` the Pangea user_data writes to `environmentFile`.
+      '';
     };
 
     webhookListenAddress = lib.mkOption {
@@ -271,6 +308,38 @@ in {
       '';
     };
 
+    firstBootResolver = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Run the binary's `init` subcommand as an `ExecStartPre` to render the
+        runtime config (`/run/${runtimeDirName}/config.yaml`) from the
+        `environmentFile` (`/etc/shaar/env`) `SHAAR_*` keys + the instance public
+        IP (`SHAAR_PUBLIC_IP` override, else IMDS), then load it via `--config`.
+        This is the default AMI / cloud path: `public_endpoint` is resolved at
+        boot, not bake time. Set false to load a static Nix-rendered config (or an
+        explicit `configFile`) instead. Bypassed when `configFile` is set — the
+        explicit path wins.
+      '';
+    };
+
+    environmentFile = lib.mkOption {
+      # A target path the Pangea user_data writes (`str`, not `path`, so eval
+      # never copies a runtime file into the store), loaded as a systemd
+      # EnvironmentFile (`-`-prefixed/optional) so the `init` resolver sees the
+      # SHAAR_* keys. Set null to skip loading it (init then uses IMDS + defaults).
+      type = lib.types.nullOr lib.types.str;
+      default = "/etc/shaar/env";
+      example = "/etc/shaar/env";
+      description = ''
+        The systemd `EnvironmentFile` the first-boot `init` resolver reads its
+        `SHAAR_*` keys from (the Pangea ShaarConcentrator user_data writes it).
+        Loaded `-`-prefixed (optional) so a boot before user_data has written it
+        does not block the unit — the binary falls back to its contract defaults +
+        IMDS. Only consulted when `firstBootResolver` is enabled.
+      '';
+    };
+
     configFile = lib.mkOption {
       # A path ON THE TARGET (e.g. a `/run/...` file a first-boot resolver
       # renders), not a build input — `str`, not `path`, so eval never tries to
@@ -279,9 +348,12 @@ in {
       default = null;
       example = "/run/shaar-concentrator/config.yaml";
       description = ''
-        Override the Nix-rendered config with an explicit target path (e.g. one a
-        first-boot resolver renders with the per-instance `public_endpoint`). When
-        null, the module renders the config from the typed options above.
+        Override the resolver/Nix-rendered config with an explicit target path
+        (e.g. one an external first-boot resolver renders with the per-instance
+        `public_endpoint`). When set, it bypasses `firstBootResolver` — the
+        service loads this path directly and does NOT run the `init` ExecStartPre.
+        When null, the module uses `firstBootResolver` (default) or the Nix-rendered
+        config from the typed options above.
       '';
     };
 
@@ -318,11 +390,14 @@ in {
     # The public_endpoint hole is named, never silent: warn (don't hard-fail
     # eval) when no endpoint is available so the profile stays importable but the
     # operator sees the gap.
-    warnings = lib.optional (cfg.configFile == null && cfg.publicEndpoint == null) ''
-      pleme.nixos.shaarConcentrator: neither `publicEndpoint` nor `configFile` is
-      set, so the rendered config omits the required `public_endpoint` field. The
-      shaar-concentrator service will fail-fast at startup until a first-boot
-      resolver renders `configFile` with the instance's EIP ip:port.
+    warnings = lib.optional (cfg.configFile == null && cfg.publicEndpoint == null && !cfg.firstBootResolver) ''
+      pleme.nixos.shaarConcentrator: `firstBootResolver` is disabled and neither
+      `publicEndpoint` nor `configFile` is set, so the Nix-rendered static config
+      omits the required `public_endpoint` field and the service will fail-fast at
+      startup. Either leave `firstBootResolver` enabled (the default — the `init`
+      subcommand resolves the EIP ip:port at boot from the `environmentFile` keys
+      + the instance public IP), set `publicEndpoint` to the EIP ip:port, or point
+      `configFile` at a pre-rendered file.
     '';
 
     # ── Forwarding + tun device ─────────────────────────────────────────
@@ -376,8 +451,18 @@ in {
           StandardOutput = "journal";
           StandardError = "journal";
         }
-        // lib.optionalAttrs (cfg.credentialsFile != null) {
-          EnvironmentFile = cfg.credentialsFile;
+        // lib.optionalAttrs useInitResolver {
+          # First-boot resolver: systemd creates RuntimeDirectory (0700) and loads
+          # EnvironmentFile (below) BEFORE the ExecStartPre, so the `init`
+          # subcommand sees the SHAAR_* env + writes ${runtimeConfigPath}, which
+          # the ExecStart then loads via `--config`. The binary owns ALL resolver
+          # logic — NO SHELL, just the one Exec line.
+          RuntimeDirectory = runtimeDirName;
+          RuntimeDirectoryMode = "0700";
+          ExecStartPre = "${cfg.package}/bin/shaar-concentrator init --out ${runtimeConfigPath}";
+        }
+        // lib.optionalAttrs (envFiles != []) {
+          EnvironmentFile = envFiles;
         };
     };
 
